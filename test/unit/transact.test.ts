@@ -1,7 +1,7 @@
 import {
   GAS_OPTIMIZED_TX_FEE_MULTIPLES,
   generateGasSpreadTransactions
-} from '../../src/api/transact-namespace';
+} from '../../src/api/transact-namespace.js';
 
 describe('Transact Namespace', () => {
   it('generateGasSpreadTransactions() sets gas limits and fee spread', async () => {

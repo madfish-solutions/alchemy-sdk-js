@@ -1,13 +1,12 @@
-import type { Listener } from '@ethersproject/abstract-provider';
-
-import { isAlchemyEvent } from '../internal/ethers-event';
+import { isAlchemyEvent } from '../internal/subscription-event.js';
+import type { Listener } from '../types/eth.js';
 import {
   AlchemyEventType,
   AlchemyMinedTransactionsAddress,
   AlchemySubscription,
   NonEmptyArray
-} from '../types/types';
-import { AlchemyConfig } from './alchemy-config';
+} from '../types/types.js';
+import { AlchemyConfig } from './alchemy-config.js';
 
 /**
  * The Websocket namespace contains all subscription related functions that
@@ -195,8 +194,7 @@ export class WebSocketNamespace {
    * @internal
    */
   async _resolveNameOrError(name: string): Promise<string> {
-    const provider = await this.config.getProvider();
-    const resolved = await provider.resolveName(name);
+    const resolved = await this.config.resolveName(name);
     if (resolved === null) {
       throw new Error(`Unable to resolve the ENS address: ${name}`);
     }

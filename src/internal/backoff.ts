@@ -1,4 +1,4 @@
-import { logDebug } from '../util/logger';
+import { logDebug } from '../util/logger.js';
 
 export const DEFAULT_BACKOFF_INITIAL_DELAY_MS = 1000;
 export const DEFAULT_BACKOFF_MULTIPLIER = 1.5;

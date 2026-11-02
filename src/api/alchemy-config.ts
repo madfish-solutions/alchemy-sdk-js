@@ -1,6 +1,12 @@
-import { ConnectionInfo } from '@ethersproject/web';
+import { type PublicClient, createPublicClient, defineChain } from 'viem';
 
-import { AlchemySettings, Network } from '../types/types';
+import { alchemyTransport } from '@alchemy/common';
+
+import { JsonRpcRequest, JsonRpcResponse } from '../internal/internal-types.js';
+import { jsonRpcHttpUrl, resolveNetwork } from '../internal/network.js';
+import { RequestBatcher } from '../internal/request-batcher.js';
+import type { NetworkInfo } from '../types/eth.js';
+import { AlchemySettings, Network } from '../types/types.js';
 import {
   AlchemyApiType,
   DEFAULT_ALCHEMY_API_KEY,
@@ -12,13 +18,14 @@ import {
   getAlchemyWebhookHttpUrl,
   getDataBaseUrl,
   getPricesBaseUrl
-} from '../util/const';
-import type { AlchemyProvider } from './alchemy-provider';
-import type { AlchemyWebSocketProvider } from './alchemy-websocket-provider';
+} from '../util/const.js';
+import { VERSION } from '../version.js';
+import type { AlchemyWebSocketProvider } from './alchemy-websocket-provider.js';
+import { isHexAddress } from './util.js';
 
 /**
  * This class holds the config information for the SDK client instance and
- * exposes the underlying providers for more advanced use cases.
+ * exposes the underlying viem client for more advanced use cases.
  *
  * @public
  */
@@ -27,7 +34,7 @@ export class AlchemyConfig {
   readonly apiKey: string;
 
   /** The Network that this SDK is associated with. */
-  readonly network: Network;
+  readonly network: Network | string;
 
   /** The maximum number of retries to perform. */
   readonly maxRetries: number;
@@ -35,7 +42,13 @@ export class AlchemyConfig {
   /** Setting to enable automatic batching on json-rpc requests. Defaults to false.*/
   readonly batchRequests: boolean;
 
-  readonly connectionInfoOverrides?: Partial<ConnectionInfo>;
+  /** Optional headers forwarded to Alchemy HTTP requests. */
+  readonly headers?: Record<string, string>;
+
+  /**
+   * Optional JWT. When set, it is sent instead of the API key as the bearer token.
+   */
+  readonly jwt?: string;
 
   /**
    * The optional hardcoded URL to send requests to instead of using the network
@@ -49,33 +62,26 @@ export class AlchemyConfig {
   /**
    * The optional Request timeout provided in `ms` for NFT and NOTIFY API. Defaults to 0.
    */
-  readonly requestTimeout?: number;
+  readonly requestTimeout: number;
 
-  /**
-   * Dynamically imported provider instance.
-   *
-   * @internal
-   */
-  private _baseAlchemyProvider: Promise<AlchemyProvider> | undefined;
+  /** @internal */
+  readonly batcher: RequestBatcher;
 
-  /**
-   * Dynamically imported provider instance.
-   *
-   * @internal
-   */
-  private _baseAlchemyWssProvider:
-    | Promise<AlchemyWebSocketProvider>
-    | undefined;
+  private _client: Promise<PublicClient> | undefined;
+  private _websocketProvider: Promise<AlchemyWebSocketProvider> | undefined;
+  private nextId = 1;
 
   constructor(config?: AlchemySettings) {
     this.apiKey = config?.apiKey || DEFAULT_ALCHEMY_API_KEY;
     this.network = config?.network || DEFAULT_NETWORK;
-    this.maxRetries = config?.maxRetries || DEFAULT_MAX_RETRIES;
+    this.maxRetries = config?.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.url = config?.url;
     this.authToken = config?.authToken;
+    this.jwt = config?.jwt;
+    this.headers = config?.headers;
     this.batchRequests = config?.batchRequests || false;
     this.requestTimeout = config?.requestTimeout || DEFAULT_REQUEST_TIMEOUT;
-    this.connectionInfoOverrides = config?.connectionInfoOverrides;
+    this.batcher = new RequestBatcher(requests => this.postBatch(requests));
   }
 
   /**
@@ -103,49 +109,164 @@ export class AlchemyConfig {
   }
 
   /**
-   * Returns an AlchemyProvider instance. Only one provider is created per
-   * Alchemy instance.
-   *
-   * The AlchemyProvider is a wrapper around ether's `AlchemyProvider` class and
-   * has been expanded to support Alchemy's Enhanced APIs.
-   *
-   * Most common methods on the provider are available as top-level methods on
-   * the {@link Alchemy} instance, but the provider is exposed here to access
-   * other less-common methods.
+   * Returns the viem public client used for JSON-RPC. The same client is reused
+   * for the lifetime of this config.
    *
    * @public
    */
-  getProvider(): Promise<AlchemyProvider> {
-    if (!this._baseAlchemyProvider) {
-      this._baseAlchemyProvider = (async () => {
-        const { AlchemyProvider } = await import('./alchemy-provider');
-        return new AlchemyProvider(this);
-      })();
+  getClient(): Promise<PublicClient> {
+    this.assertEvmNetwork();
+    if (!this._client) {
+      this._client = Promise.resolve(this.createClient());
     }
-    return this._baseAlchemyProvider;
+    return this._client;
   }
 
   /**
    * Returns an AlchemyWebsocketProvider instance. Only one provider is created
    * per Alchemy instance.
-   *
-   * The AlchemyWebSocketProvider is a wrapper around ether's
-   * `AlchemyWebSocketProvider` class and has been expanded to support Alchemy's
-   * Subscription APIs, automatic backfilling, and other performance improvements.
-   *
-   * Most common methods on the provider are available as top-level methods on
-   * the {@link Alchemy} instance, but the provider is exposed here to access
-   * other less-common methods.
    */
   getWebSocketProvider(): Promise<AlchemyWebSocketProvider> {
-    if (!this._baseAlchemyWssProvider) {
-      this._baseAlchemyWssProvider = (async () => {
-        const { AlchemyWebSocketProvider } = await import(
-          './alchemy-websocket-provider'
-        );
-        return new AlchemyWebSocketProvider(this);
-      })();
+    if (!this._websocketProvider) {
+      this._websocketProvider = import('./alchemy-websocket-provider.js').then(
+        ({ AlchemyWebSocketProvider }) => new AlchemyWebSocketProvider(this)
+      );
     }
-    return this._baseAlchemyWssProvider;
+    return this._websocketProvider;
+  }
+
+  /**
+   * Sends a JSON-RPC request. Batches when `batchRequests` is enabled.
+   * Otherwise the call goes through `alchemyTransport`, which applies retries.
+   *
+   * @internal
+   */
+  send(method: string, params: unknown[] = []): Promise<any> {
+    this.assertEvmNetwork();
+    if (this.batchRequests) {
+      const request: JsonRpcRequest = {
+        jsonrpc: '2.0',
+        id: this.nextId++,
+        method,
+        params
+      };
+      return this.batcher.enqueueRequest(request);
+    }
+    return this.getClient().then(client =>
+      client.request({ method, params } as any)
+    );
+  }
+
+  /** @internal */
+  async resolveName(name: string): Promise<string | null> {
+    if (isHexAddress(name)) {
+      return name;
+    }
+    if (!name.includes('.')) {
+      return null;
+    }
+    try {
+      const client = await this.getClient();
+      const address = await client.getEnsAddress({ name });
+      return address ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** @internal */
+  async lookupAddress(address: string): Promise<string | null> {
+    try {
+      const client = await this.getClient();
+      const name = await client.getEnsName({
+        address: address as `0x${string}`
+      });
+      return name ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** @internal */
+  async resolveAddress(addressOrName: string): Promise<string> {
+    if (isHexAddress(addressOrName)) {
+      return addressOrName;
+    }
+    const resolved = await this.resolveName(addressOrName);
+    if (resolved === null) {
+      throw new Error(`Unable to resolve the ENS address: ${addressOrName}`);
+    }
+    return resolved;
+  }
+
+  /** @internal */
+  getNetworkInfo(): NetworkInfo {
+    const resolved = resolveNetwork(String(this.network));
+    return {
+      name: resolved.slug,
+      chainId: resolved.chainId ?? 0
+    };
+  }
+
+  private assertEvmNetwork(): void {
+    const resolved = resolveNetwork(String(this.network));
+    if (resolved.solana) {
+      throw new Error(
+        `JSON-RPC is not available for Solana network '${resolved.slug}'.`
+      );
+    }
+  }
+
+  private createClient(): PublicClient {
+    const resolved = resolveNetwork(String(this.network));
+    const endpoint = jsonRpcHttpUrl(String(this.network), this.url);
+    const chain = defineChain({
+      id: resolved.chainId ?? 1,
+      name: resolved.slug,
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpcUrls: { default: { http: [endpoint] } }
+    });
+    const transport = alchemyTransport({
+      apiKey: this.apiKey,
+      jwt: this.jwt,
+      url:
+        this.url ??
+        (resolved.chainId == null ? resolved.rpcBaseUrl : undefined),
+      retryCount: this.maxRetries,
+      retryDelay: 1000,
+      timeout: this.requestTimeout > 0 ? this.requestTimeout : undefined,
+      fetchOptions: {
+        headers: {
+          'Alchemy-Sdk-Version': VERSION,
+          ...this.headers
+        }
+      }
+    });
+    return createPublicClient({ chain, transport });
+  }
+
+  private async postBatch(
+    requests: JsonRpcRequest[]
+  ): Promise<JsonRpcResponse[]> {
+    const token = this.jwt ?? this.apiKey;
+    const response = await fetch(
+      jsonRpcHttpUrl(String(this.network), this.url),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'Alchemy-Sdk-Version': VERSION,
+          'Alchemy-Sdk-Method': 'batchSend',
+          ...this.headers
+        },
+        body: JSON.stringify(requests)
+      }
+    );
+    if (!response.ok) {
+      const { ServerError } = await import('@alchemy/common');
+      throw new ServerError(await response.text(), response.status);
+    }
+    return (await response.json()) as JsonRpcResponse[];
   }
 }

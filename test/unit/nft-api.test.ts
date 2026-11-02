@@ -1,6 +1,4 @@
-import axios from 'axios';
-import MockAdapter from 'axios-mock-adapter';
-
+import { AlchemyConfig } from '../../src/api/alchemy-config.js';
 import {
   Alchemy,
   AssetTransfersCategory,
@@ -31,9 +29,9 @@ import {
   SortingOrder,
   fromHex,
   toHex
-} from '../../src';
-import { AlchemyConfig } from '../../src/api/alchemy-config';
-import { getNftsForTransfers } from '../../src/internal/nft-api';
+} from '../../src/index.js';
+import { setHttpTransport } from '../../src/internal/http.js';
+import { getNftsForTransfers } from '../../src/internal/nft-api.js';
 import {
   RawGetBaseNftsForContractResponse,
   RawGetBaseNftsResponse,
@@ -44,8 +42,9 @@ import {
   RawGetOwnersForContractWithTokenBalancesResponse,
   RawNftAttributeRarity,
   RawNftImage
-} from '../../src/internal/raw-interfaces';
-import { getNftContractFromRaw, getNftFromRaw } from '../../src/util/util';
+} from '../../src/internal/raw-interfaces.js';
+import { getNftContractFromRaw, getNftFromRaw } from '../../src/util/util.js';
+import { HttpMock } from '../http-mock.js';
 import {
   createBaseNft,
   createNft,
@@ -59,19 +58,24 @@ import {
   createRawOwnedBaseNft,
   createRawOwnedNft,
   verifyNftContractMetadata
-} from '../test-util';
+} from '../test-util.js';
 
 describe('NFT module', () => {
   let alchemy: Alchemy;
-  let mock: MockAdapter;
+  let mock: HttpMock;
 
   beforeAll(async () => {
     alchemy = new Alchemy();
-    mock = new MockAdapter(axios);
+    mock = new HttpMock();
 
     // Skip all timeouts for testing.
     jest.useFakeTimers();
     jest.spyOn(global, 'setTimeout').mockImplementation((f: any) => f());
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+    setHttpTransport();
   });
 
   afterEach(() => {
@@ -289,7 +293,7 @@ describe('NFT module', () => {
       });
       expect(response.nfts).toEqual(expectedNfts);
       expect(mock.history.post.length).toEqual(1);
-      const parsedRequest = JSON.parse(mock.history.post[0].data);
+      const parsedRequest = JSON.parse(mock.history.post[0].data ?? '{}');
       expect(parsedRequest).toHaveProperty('tokens', tokens);
       expect(parsedRequest).toHaveProperty('tokens', tokens);
       expect(parsedRequest).toHaveProperty('refreshCache', true);
@@ -658,7 +662,7 @@ describe('NFT module', () => {
           )) {
             tokenIds.push(fromHex(ownedNft.tokenId));
           }
-          fail('getNftsIterator should have surfaced error');
+          throw new Error('getNftsIterator should have surfaced error');
         } catch (e) {
           expect(tokenIds).toEqual([1, 2]);
           expect((e as Error).message).toContain('Internal Server Error');
@@ -952,7 +956,9 @@ describe('NFT module', () => {
           )) {
             tokenIds.push(nft.tokenId);
           }
-          fail('getNftsForNftContractIterator() should have surfaced error');
+          throw new Error(
+            'getNftsForNftContractIterator() should have surfaced error'
+          );
         } catch (e) {
           expect(tokenIds).toEqual(['1', '2']);
           expect((e as Error).message).toContain('Internal Server Error');
@@ -1829,9 +1835,6 @@ describe('NFT module', () => {
   });
 
   // TODO: Add unit tests once we've implemented MockProvider.
-  describe('getMintedNfts()', () => {});
-  describe('getTransfersForOwner()', () => {});
-
   describe('getNftsForTransfers() helper method', () => {
     let config: AlchemyConfig;
 
@@ -1948,9 +1951,9 @@ describe('NFT module', () => {
       };
       mock
         .onPost()
-        .reply(200, nftMetadataBatchResponse1)
+        .replyOnce(200, nftMetadataBatchResponse1)
         .onPost()
-        .reply(200, nftMetadataBatchResponse2);
+        .replyOnce(200, nftMetadataBatchResponse2);
 
       const transfers = [
         create1155Transfer(

@@ -1,47 +1,42 @@
 import { Server, WebSocket } from 'mock-socket';
+import type { MockInstance } from 'vitest';
 
-import { Formatter } from '@ethersproject/providers/lib/formatter';
-
+import { AlchemyWebSocketProvider } from '../../src/api/alchemy-websocket-provider.js';
 import {
   Alchemy,
-  AlchemyConfig,
   AlchemyMinedTransactionsEventFilter,
   AlchemyPendingTransactionsEventFilter,
   AlchemySubscription,
   Network,
   WebSocketNamespace,
   toHex
-} from '../../src';
-import { AlchemyProvider } from '../../src/api/alchemy-provider';
-import { AlchemyWebSocketProvider } from '../../src/api/alchemy-websocket-provider';
-import {
-  EthersEvent,
-  getAlchemyEventTag
-} from '../../src/internal/ethers-event';
+} from '../../src/index.js';
 import {
   ALCHEMY_MINED_TRANSACTIONS_EVENT_TYPE,
   ALCHEMY_PENDING_TRANSACTIONS_EVENT_TYPE
-} from '../../src/internal/internal-types';
+} from '../../src/internal/internal-types.js';
+import {
+  SubscriptionEvent,
+  getAlchemyEventTag
+} from '../../src/internal/subscription-event.js';
 import {
   LogsEvent,
   LogsSubscriptionFilter,
   NewHeadsEvent,
   WebsocketBackfiller
-} from '../../src/internal/websocket-backfiller';
-import { noop } from '../../src/util/const';
+} from '../../src/internal/websocket-backfiller.js';
+import { noop } from '../../src/util/const.js';
 import {
   Deferred,
   Mocked,
   makeLogsEvent,
   makeNewHeadsEvent
-} from '../test-util';
-
-import SpyInstance = jest.SpyInstance;
+} from '../test-util.js';
 
 describe('AlchemyWebSocketProvider', () => {
   let wsProvider: Mocked<AlchemyWebSocketProvider>;
   let mockServer: Server;
-  let mockBackfiller: jest.SpyInstance;
+  let mockBackfiller: MockInstance;
 
   interface MockServerOptions {
     ethSubscribeIds?: Array<string>;
@@ -113,20 +108,18 @@ describe('AlchemyWebSocketProvider', () => {
   }
 
   function initializeWebSocketProvider(): void {
-    AlchemyProvider.getAlchemyConnectionInfo = jest.fn().mockReturnValue({
-      url: 'ws://localhost:1234'
-    } as any);
     wsProvider = new AlchemyWebSocketProvider(
-      {
+      new Alchemy({
         network: Network.ETH_MAINNET,
         apiKey: 'demo',
-        maxRetries: 5
-      } as AlchemyConfig,
+        maxRetries: 5,
+        url: 'ws://localhost:1234'
+      }).config,
       WebSocket
     ) as Mocked<AlchemyWebSocketProvider>;
   }
 
-  function expectSubscribeCalled(spy: SpyInstance, expected: any): void {
+  function expectSubscribeCalled(spy: MockInstance, expected: any): void {
     const subCalls = spy.mock.calls.filter(call => call[0] === 'eth_subscribe');
     expect(subCalls.length).toBeGreaterThan(0);
     expect(subCalls[0][1]).toEqual(expected);
@@ -202,10 +195,11 @@ describe('AlchemyWebSocketProvider', () => {
     const provider = await alchemy.config.getWebSocketProvider();
     expect(provider._websocket.url).toEqual('wss://hardcoded-url.com');
     expect(provider.apiKey).toEqual('demo-key');
+    await provider.destroy();
   });
 
   describe('newHeads/on(block)', () => {
-    it('handles default ethers subscriptions', done => {
+    it('handles default ethers subscriptions', (done: () => void) => {
       const sendSpy = jest.spyOn(AlchemyWebSocketProvider.prototype, 'send');
       setupMockServer({
         ethSubscribeIds: ['0xabc'],
@@ -225,7 +219,7 @@ describe('AlchemyWebSocketProvider', () => {
       });
     });
 
-    it('emits backfill and maps new virtual ids', done => {
+    it('emits backfill and maps new virtual ids', (done: () => void) => {
       // Test simulates:
       // - Starting block number at 100 with 'newHeads' subscription.
       // - Subscription returns block 100 then socket does down.
@@ -274,7 +268,7 @@ describe('AlchemyWebSocketProvider', () => {
       });
     });
 
-    it('buffers events when socket is down and dedupes after', done => {
+    it('buffers events when socket is down and dedupes after', (done: () => void) => {
       // Test simulates
       // - Starting block number at 100 with 'newHeads' subscription.
       // - Subscription returns block 100 then socket does down.
@@ -333,14 +327,7 @@ describe('AlchemyWebSocketProvider', () => {
   describe('logs/on(filter)', () => {
     const contractAddress = '0x65d25E3F2696B73b850daA07Dd1E267dCfa67F2D';
 
-    beforeEach(() => {
-      // Mock out the `Formatter` to avoid filling out all fields in mocks logs.
-      jest
-        .spyOn(Formatter.prototype, 'filterLog')
-        .mockImplementation((val: any) => val);
-    });
-
-    it('handles default ethers subscriptions', done => {
+    it('handles default ethers subscriptions', (done: () => void) => {
       const sendSpy = jest.spyOn(AlchemyWebSocketProvider.prototype, 'send');
       const logsEvents = [
         makeLogsEvent(100, 'a', false),
@@ -366,7 +353,7 @@ describe('AlchemyWebSocketProvider', () => {
       });
     });
 
-    it('emits backfill and maps new virtual ids', done => {
+    it('emits backfill and maps new virtual ids', (done: () => void) => {
       // Test simulates:
       // - Starting block number at 100 with 'logs' subscription.
       // - Subscription returns log for 100 then socket does down.
@@ -431,7 +418,7 @@ describe('AlchemyWebSocketProvider', () => {
       });
     });
 
-    it('buffers events when socket is down and dedupes after', done => {
+    it('buffers events when socket is down and dedupes after', (done: () => void) => {
       // Test simulates
       // - Starting block number at 100 with 'logs' subscription.
       // - Subscription returns logs 100 then socket does down.
@@ -500,7 +487,7 @@ describe('AlchemyWebSocketProvider', () => {
   });
 
   describe('alchemy_pendingTransactions', () => {
-    it('handles default subscriptions', done => {
+    it('handles default subscriptions', (done: () => void) => {
       const sendSpy = jest.spyOn(AlchemyWebSocketProvider.prototype, 'send');
       setupMockServer({
         ethSubscribeIds: ['0xabc'],
@@ -529,7 +516,7 @@ describe('AlchemyWebSocketProvider', () => {
       );
     });
 
-    it('handles subscriptions with params', done => {
+    it('handles subscriptions with params', (done: () => void) => {
       const contractAddress = '0x65d25E3F2696B73b850daA07Dd1E267dCfa67F2D';
       const sendSpy = jest.spyOn(AlchemyWebSocketProvider.prototype, 'send');
       setupMockServer({
@@ -567,7 +554,7 @@ describe('AlchemyWebSocketProvider', () => {
     ) {
       const serialized = getAlchemyEventTag(event);
       expect(serialized).toEqual(expected);
-      const deserialized = new EthersEvent(expected, noop, true);
+      const deserialized = new SubscriptionEvent(expected, noop, true);
       expect(deserialized.fromAddress).toEqual(event.fromAddress);
       expect(deserialized.toAddress).toEqual(event.toAddress);
       expect(deserialized.hashesOnly).toEqual(event.hashesOnly);
@@ -738,13 +725,13 @@ describe('AlchemyWebSocketProvider', () => {
     ) {
       const serialized = getAlchemyEventTag(event);
       expect(serialized).toEqual(expected);
-      const deserialized = new EthersEvent(expected, noop, true);
+      const deserialized = new SubscriptionEvent(expected, noop, true);
       expect(deserialized.addresses).toEqual(event.addresses);
       expect(deserialized.includeRemoved).toEqual(event.includeRemoved);
       expect(deserialized.hashesOnly).toEqual(event.hashesOnly);
     }
 
-    it('handles subscriptions with params', done => {
+    it('handles subscriptions with params', (done: () => void) => {
       const contractAddress = '0x65d25E3F2696B73b850daA07Dd1E267dCfa67F2D';
       const sendSpy = jest.spyOn(AlchemyWebSocketProvider.prototype, 'send');
       setupMockServer({

@@ -1,6 +1,6 @@
-import { BigNumber, BigNumberish } from '@ethersproject/bignumber';
-
-import { AlchemyConfig } from '../api/alchemy-config';
+import { AlchemyConfig } from '../api/alchemy-config.js';
+import { toDecimalString } from '../api/util.js';
+import type { Quantity } from '../types/eth.js';
 import {
   BaseNft,
   ComputeRarityResponse,
@@ -47,7 +47,7 @@ import {
   OwnedNftsResponse,
   SearchContractMetadataResponse,
   TransfersNftResponse
-} from '../types/nft-types';
+} from '../types/nft-types.js';
 import {
   AssetTransfersCategory,
   AssetTransfersParams,
@@ -57,9 +57,9 @@ import {
   GetTransfersForOwnerTransferType,
   RefreshContractResult,
   SortingOrder
-} from '../types/types';
-import { AlchemyApiType, ETH_NULL_ADDRESS } from '../util/const';
-import { sanitizeTokenType } from '../util/inputSanitization';
+} from '../types/types.js';
+import { AlchemyApiType, ETH_NULL_ADDRESS } from '../util/const.js';
+import { sanitizeTokenType } from '../util/inputSanitization.js';
 import {
   getBaseNftFromRaw,
   getNftCollectionFromRaw,
@@ -68,9 +68,10 @@ import {
   getNftFromRaw,
   getNftSalesFromRaw,
   nullsToUndefined
-} from '../util/util';
-import { getAssetTransfers } from './core-api';
-import { paginateEndpoint, requestHttpWithBackoff } from './dispatch';
+} from '../util/util.js';
+import { getAssetTransfers } from './core-api.js';
+import { paginateEndpoint, requestHttpWithBackoff } from './dispatch.js';
+import { formatBlockTag } from './eth-rpc.js';
 import {
   RawComputeRarityResponse,
   RawContractBaseNft,
@@ -96,7 +97,7 @@ import {
   RawOwnedNft,
   RawReingestContractResponse,
   RawSearchContractMetadataResponse
-} from './raw-interfaces';
+} from './raw-interfaces.js';
 
 /**
  * This file contains the underlying implementations for exposed API surface in
@@ -111,7 +112,7 @@ import {
 export async function getNftMetadata(
   config: AlchemyConfig,
   contractAddress: string,
-  tokenId: BigNumberish,
+  tokenId: Quantity,
   options?: GetNftMetadataOptions,
   srcMethod = 'getNftMetadata'
 ): Promise<Nft> {
@@ -122,7 +123,7 @@ export async function getNftMetadata(
     srcMethod,
     {
       contractAddress,
-      tokenId: BigNumber.from(tokenId!).toString(),
+      tokenId: toDecimalString(tokenId!),
       tokenType: sanitizeTokenType(options?.tokenType),
       tokenUriTimeoutInMs: options?.tokenUriTimeoutInMs,
       refreshCache: options?.refreshCache
@@ -414,7 +415,7 @@ export async function getContractsForOwner(
 export async function getOwnersForNft(
   config: AlchemyConfig,
   contractAddress: string,
-  tokenId: BigNumberish,
+  tokenId: Quantity,
   options?: GetOwnersForContractOptions,
   srcMethod = 'getOwnersForNft'
 ): Promise<GetOwnersForNftResponse> {
@@ -425,7 +426,7 @@ export async function getOwnersForNft(
     srcMethod,
     {
       contractAddress,
-      tokenId: BigNumber.from(tokenId!).toString(),
+      tokenId: toDecimalString(tokenId!),
       ...options
     }
   );
@@ -436,8 +437,7 @@ export async function getMintedNfts(
   owner: string,
   options?: GetMintedNftsOptions
 ): Promise<TransfersNftResponse> {
-  const provider = await config.getProvider();
-  const ownerAddress = await provider._getAddress(owner);
+  const ownerAddress = await config.resolveAddress(owner);
   const category = nftTokenTypeToCategory(options?.tokenType);
   const params: AssetTransfersParams = {
     fromBlock: '0x0',
@@ -459,8 +459,7 @@ export async function getTransfersForOwner(
   transferType: GetTransfersForOwnerTransferType,
   options?: GetTransfersForOwnerOptions
 ): Promise<TransfersNftResponse> {
-  const provider = await config.getProvider();
-  const ownerAddress = await provider._getAddress(owner);
+  const ownerAddress = await config.resolveAddress(owner);
   const category = nftTokenTypeToCategory(options?.tokenType);
   const params: AssetTransfersParams = {
     fromBlock: '0x0',
@@ -495,14 +494,11 @@ export async function getTransfersForContract(
     AssetTransfersCategory.ERC1155,
     AssetTransfersCategory.SPECIALNFT
   ];
-  const provider = await config.getProvider();
   const fromBlock = options?.fromBlock
-    ? provider.formatter.blockTag(
-        await provider._getBlockTag(options.fromBlock)
-      )
+    ? formatBlockTag(options.fromBlock)
     : '0x0';
   const toBlock = options?.toBlock
-    ? provider.formatter.blockTag(await provider._getBlockTag(options.toBlock))
+    ? formatBlockTag(options.toBlock)
     : undefined;
   const params: AssetTransfersParams = {
     fromBlock,
@@ -691,9 +687,7 @@ export async function getNftSales(
     order: params?.order,
     marketplace: params?.marketplace,
     contractAddress: params?.contractAddress,
-    tokenId: params?.tokenId
-      ? BigNumber.from(params?.tokenId).toString()
-      : undefined,
+    tokenId: params?.tokenId ? toDecimalString(params.tokenId) : undefined,
     sellerAddress: params?.sellerAddress,
     buyerAddress: params?.buyerAddress,
     taker: params?.taker,
@@ -707,7 +701,7 @@ export async function getNftSales(
 export async function computeRarity(
   config: AlchemyConfig,
   contractAddress: string,
-  tokenId: BigNumberish,
+  tokenId: Quantity,
   srcMethod = 'computeRarity'
 ): Promise<ComputeRarityResponse> {
   const response = await requestHttpWithBackoff<
@@ -715,7 +709,7 @@ export async function computeRarity(
     RawComputeRarityResponse
   >(config, AlchemyApiType.NFT, 'computeRarity', srcMethod, {
     contractAddress,
-    tokenId: BigNumber.from(tokenId).toString()
+    tokenId: toDecimalString(tokenId)
   });
 
   return nullsToUndefined(response);
@@ -754,10 +748,10 @@ export async function summarizeNftAttributes(
 export async function refreshNftMetadata(
   config: AlchemyConfig,
   contractAddress: string,
-  tokenId: BigNumberish,
+  tokenId: Quantity,
   srcMethod = 'refreshNftMetadata'
 ): Promise<boolean> {
-  const tokenIdString = BigNumber.from(tokenId!).toString();
+  const tokenIdString = toDecimalString(tokenId!);
   const first = await getNftMetadata(
     config,
     contractAddress,
@@ -796,7 +790,7 @@ export async function refreshContract(
 async function refresh(
   config: AlchemyConfig,
   contractAddress: string,
-  tokenId: BigNumberish,
+  tokenId: Quantity,
   srcMethod: string
 ): Promise<Nft> {
   const response = await requestHttpWithBackoff<GetNftMetadataParams, RawNft>(
@@ -806,7 +800,7 @@ async function refresh(
     srcMethod,
     {
       contractAddress,
-      tokenId: BigNumber.from(tokenId!).toString(),
+      tokenId: toDecimalString(tokenId!),
       refreshCache: true
     }
   );
@@ -905,16 +899,16 @@ export async function getNftsForTransfers(
   // each NFT to pair with the transfer metadata.
   const nftsByTokenId = new Map<string, Nft>();
   nfts.forEach(nft => {
-    const key = `${nft.contract.address.toLowerCase()}-${BigNumber.from(
+    const key = `${nft.contract.address.toLowerCase()}-${toDecimalString(
       nft.tokenId
-    ).toString()}`;
+    )}`;
     nftsByTokenId.set(key, nft);
   });
 
   const transferredNfts = metadataTransfers.map(t => {
-    const key = `${t.token.contractAddress.toLowerCase()}-${BigNumber.from(
+    const key = `${t.token.contractAddress.toLowerCase()}-${toDecimalString(
       t.token.tokenId
-    ).toString()}`;
+    )}`;
     return {
       ...nftsByTokenId.get(key)!,
       ...t.metadata

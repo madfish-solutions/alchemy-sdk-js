@@ -1,7 +1,22 @@
-import { Contract } from '../api/alchemy-contract';
-import { Nft } from './nft-types';
-import { TokenPrice } from './prices-types';
-import { Network, TokenMetadataResponse, TransactionReceipt } from './types';
+import { Nft } from './nft-types.js';
+import { TokenPrice } from './prices-types.js';
+import { Network, TokenMetadataResponse, TransactionReceipt } from './types.js';
+
+/**
+ * Metadata for an NFT contract returned by the portfolio API.
+ *
+ * @public
+ */
+export interface PortfolioNftContract {
+  address?: string;
+  name?: string;
+  symbol?: string;
+  totalSupply?: string;
+  tokenType?: string;
+  contractDeployer?: string;
+  deployedBlockNumber?: number;
+  isSpam?: boolean;
+}
 
 /**
  * Used by {@link PortfolioNamespace} to represent an address and a list of
@@ -162,8 +177,8 @@ export interface GetNftCollectionsByWalletResponse {
   data: {
     /** Array of objects representing the NFT contracts held by the address. */
     contracts: Array<{
-      /** An array of contract metadata for NFTs. {@link Contract} */
-      contract: Contract[];
+      /** An array of contract metadata for NFTs. {@link PortfolioNftContract} */
+      contract: PortfolioNftContract[];
 
       /** The network on which the NFT contract resides. {@link Network} */
       network: Network;

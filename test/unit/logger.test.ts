@@ -1,5 +1,5 @@
-import { setLogLevel } from '../../src';
-import { logDebug, logError, logInfo, logWarn } from '../../src/util/logger';
+import { setLogLevel } from '../../src/index.js';
+import { logDebug, logError, logInfo, logWarn } from '../../src/util/logger.js';
 
 describe('Logger', () => {
   const message = 'Important logging message';

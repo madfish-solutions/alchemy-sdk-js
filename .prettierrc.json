@@ -6,7 +6,7 @@
   "semi": true,
   "arrowParens": "avoid",
   "plugins": ["prettier-plugin-jsdoc"],
-  "importOrder": ["^@ethersproject/(.*)$", "^[./]"],
+  "importOrder": ["^@(alchemy|viem)(.*)$", "^[./]"],
   "importOrderSeparation": true,
   "importOrderSortSpecifiers": true
 }

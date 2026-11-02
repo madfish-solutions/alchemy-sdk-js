@@ -1,3 +1,8 @@
+import {
+  LogLevel as CommonLogLevel,
+  setGlobalLoggerConfig
+} from '@alchemy/common/internal';
+
 /**
  * The SDK has 4 log levels and a 5th option for disabling all logging. By
  * default, the log level is set to INFO.
@@ -55,6 +60,36 @@ const DEFAULT_LOG_LEVEL = LogLevel.INFO;
  */
 export function setLogLevel(logLevel: LogLevelString): void {
   loggerClient.logLevel = logLevelStringToEnum[logLevel];
+  const commonLevel = {
+    debug: CommonLogLevel.DEBUG,
+    info: CommonLogLevel.INFO,
+    warn: CommonLogLevel.WARN,
+    error: CommonLogLevel.ERROR,
+    silent: CommonLogLevel.ERROR
+  }[logLevel];
+  setGlobalLoggerConfig({
+    level: commonLevel,
+    sinks: logLevel === 'silent' ? [] : [forwardToConsole]
+  });
+}
+
+function forwardToConsole(entry: {
+  ts: number;
+  level: number;
+  message: string;
+}): void {
+  const line = `[${new Date(entry.ts).toISOString()}] Alchemy: ${
+    entry.message
+  }`;
+  if (entry.level <= CommonLogLevel.ERROR) {
+    console.error(line);
+  } else if (entry.level <= CommonLogLevel.WARN) {
+    console.warn(line);
+  } else if (entry.level <= CommonLogLevel.INFO) {
+    console.info(line);
+  } else {
+    console.log(line);
+  }
 }
 
 export function logDebug(message: string, ...args: unknown[]): void {

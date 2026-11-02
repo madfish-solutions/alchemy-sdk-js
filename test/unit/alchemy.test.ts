@@ -1,10 +1,10 @@
-import { Alchemy, AlchemySettings, Network } from '../../src';
+import { Alchemy, AlchemySettings, Network } from '../../src/index.js';
 import {
   AlchemyApiType,
   DEFAULT_ALCHEMY_API_KEY,
   DEFAULT_MAX_RETRIES,
   DEFAULT_NETWORK
-} from '../../src/util/const';
+} from '../../src/util/const.js';
 
 describe('Alchemy class', () => {
   describe('translates Network to ethers', () => {
@@ -13,7 +13,7 @@ describe('Alchemy class', () => {
         const alchemy = new Alchemy({
           network
         });
-        await alchemy.config.getProvider();
+        await alchemy.config.getClient();
       });
     }
 
@@ -55,20 +55,21 @@ describe('Alchemy class', () => {
   });
 
   it('reuses the same provider', async () => {
-    const alchemy = new Alchemy();
-    const provider = await alchemy.config.getProvider();
-    const provider2 = await alchemy.config.getProvider();
+    const alchemy = new Alchemy({ url: 'ws://127.0.0.1:9' });
+    const provider = await alchemy.config.getClient();
+    const provider2 = await alchemy.config.getClient();
     expect(provider).toBe(provider2);
 
     const wsProvider = await alchemy.config.getWebSocketProvider();
     const wsProvider2 = await alchemy.config.getWebSocketProvider();
     expect(wsProvider).toBe(wsProvider2);
+    await wsProvider.destroy();
   });
 
   it('providers are loaded once', async () => {
-    const alchemy = new Alchemy();
-    const providerPromise = alchemy.config.getProvider();
-    const provider2Promise = alchemy.config.getProvider();
+    const alchemy = new Alchemy({ url: 'ws://127.0.0.1:9' });
+    const providerPromise = alchemy.config.getClient();
+    const provider2Promise = alchemy.config.getClient();
     const provider = await providerPromise;
     const provider2 = await provider2Promise;
     expect(provider).toBe(provider2);
@@ -78,6 +79,7 @@ describe('Alchemy class', () => {
     const wsProvider = await wsProviderPromise;
     const wsProvider2 = await wsProvider2Promise;
     expect(wsProvider).toBe(wsProvider2);
+    await wsProvider.destroy();
   });
 
   it('creates a request url based on the api type', () => {

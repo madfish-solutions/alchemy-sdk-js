@@ -5,16 +5,13 @@ import {
   DebugPrestateTrace,
   DebugPrestateTracer,
   DebugTransaction
-} from '../types/types';
-import { AlchemyConfig } from './alchemy-config';
-import { hexStripZeros, hexValue, isHexString } from './utils';
+} from '../types/types.js';
+import { AlchemyConfig } from './alchemy-config.js';
+import { isHexString, toHex } from './util.js';
 
 /**
  * The Debug namespace contains methods to access the non-standard RPC methods
  * for inspecting and debugging transactions.
- *
- * For more information on the different methods and use cases please read our
- * [documentation](https://docs.alchemy.com/reference/debug-api-quickstart).
  *
  * Do not call this constructor directly. Instead, instantiate an Alchemy object
  * with `const alchemy = new Alchemy(config)` and then access the debug namespace
@@ -27,27 +24,12 @@ export class DebugNamespace {
   /**
    * Runs an `eth_call` with the context of the provided block execution using the
    * final state of the parent block as the base.
-   *
-   * @param transaction The transaction to debug trace.
-   * @param blockIdentifier The block to debug the transaction in. Can be a
-   * block hash, block number hex string, or commitment level.
-   * @param tracer Tracer type and configuration.
    */
   traceCall(
     transaction: DebugTransaction,
     blockIdentifier: BlockIdentifier,
     tracer: DebugCallTracer
   ): Promise<DebugCallTrace>;
-
-  /**
-   * Runs an `eth_call` with the context of the provided block execution using the
-   * final state of the parent block as the base.
-   *
-   * @param transaction The transaction to debug trace.
-   * @param blockIdentifier The block to debug the transaction in. Can be a
-   * block hash, block number hex string, or commitment level.
-   * @param tracer Tracer type and configuration.
-   */
   traceCall(
     transaction: DebugTransaction,
     blockIdentifier: BlockIdentifier,
@@ -58,43 +40,23 @@ export class DebugNamespace {
     blockIdentifier: BlockIdentifier,
     tracer: DebugCallTracer | DebugPrestateTracer
   ): Promise<DebugCallTrace | DebugPrestateTrace> {
-    const provider = await this.config.getProvider();
-    const params = [transaction, blockIdentifier, parseTracerParams(tracer)];
-    return provider._send('debug_traceCall', params, 'traceCall');
+    return this.config.send('debug_traceCall', [
+      transaction,
+      blockIdentifier,
+      parseTracerParams(tracer)
+    ]);
   }
 
   /**
-   * Attempts to run the transaction in the exact same manner as it was executed
-   * on the network. It will replay any transaction that may have been executed
-   * prior to this one before it and will then attempt to execute the transaction
-   * that corresponds to the given hash.
+   * Replays a mined transaction.
    *
-   * @param transactionHash The transaction hash of the transaction to trace.
-   * @param tracer Tracer type and configuration.
-   * @param timeout  A duration string of decimal numbers that overrides the
-   * default timeout of 5 seconds for JavaScript-based tracing calls. Max
-   * timeout is "10s". Valid time units are "ns", "us", "ms", "s" each with
-   * optional fraction, such as "300ms" or "2s45ms".
+   * @param timeout A duration string such as `300ms` or `2s45ms`. Max timeout is `10s`.
    */
   async traceTransaction(
     transactionHash: string,
     tracer: DebugCallTracer,
     timeout?: string
   ): Promise<DebugCallTrace>;
-
-  /**
-   * Attempts to run the transaction in the exact same manner as it was executed
-   * on the network. It will replay any transaction that may have been executed
-   * prior to this one before it and will then attempt to execute the transaction
-   * that corresponds to the given hash.
-   *
-   * @param transactionHash The transaction hash of the transaction to trace.
-   * @param tracer Tracer type and configuration.
-   * @param timeout  A duration string of decimal numbers that overrides the
-   * default timeout of 5 seconds for JavaScript-based tracing calls. Max
-   * timeout is "10s". Valid time units are "ns", "us", "ms", "s" each with
-   * optional fraction, such as "300ms" or "2s45ms".
-   */
   async traceTransaction(
     transactionHash: string,
     tracer: DebugPrestateTracer,
@@ -105,29 +67,19 @@ export class DebugNamespace {
     tracer: DebugCallTracer | DebugPrestateTracer,
     timeout?: string
   ): Promise<DebugCallTrace | DebugPrestateTrace> {
-    const provider = await this.config.getProvider();
-    const params = [transactionHash, parseTracerParams(tracer, timeout)];
-    return provider._send('debug_traceTransaction', params, 'traceTransaction');
+    return this.config.send('debug_traceTransaction', [
+      transactionHash,
+      parseTracerParams(tracer, timeout)
+    ]);
   }
 
   /**
    * Replays a block that has already been mined.
-   *
-   * @param blockIdentifier The block to debug the transaction in. Can be a
-   * block hash, block number hex string, or commitment level.
-   * @param tracer Tracer type and configuration.
    */
   traceBlock(
     blockIdentifier: BlockIdentifier | number,
     tracer: DebugCallTracer
   ): Promise<DebugCallTrace>;
-  /**
-   * Replays a block that has already been mined.
-   *
-   * @param blockIdentifier The block to debug the transaction in. Can be a
-   * block hash, block number hex string, or commitment level.
-   * @param tracer Tracer type and configuration.
-   */
   traceBlock(
     blockIdentifier: BlockIdentifier | number,
     tracer: DebugPrestateTracer
@@ -136,21 +88,20 @@ export class DebugNamespace {
     blockIdentifier: BlockIdentifier | number,
     tracer: DebugCallTracer | DebugPrestateTracer
   ): Promise<DebugCallTrace | DebugPrestateTrace> {
-    const provider = await this.config.getProvider();
     let method: string;
     let params: [string, RawTracer];
     if (isHexString(blockIdentifier, 32)) {
       method = 'debug_traceBlockByHash';
-      params = [blockIdentifier as string, parseTracerParams(tracer)];
+      params = [blockIdentifier, parseTracerParams(tracer)];
     } else {
       method = 'debug_traceBlockByNumber';
       const block =
         typeof blockIdentifier === 'number'
-          ? hexStripZeros(hexValue(blockIdentifier))
+          ? toHex(blockIdentifier)
           : blockIdentifier;
-      params = [block as string, parseTracerParams(tracer)];
+      params = [block, parseTracerParams(tracer)];
     }
-    return provider._send(method, params, 'traceBlock');
+    return this.config.send(method, params);
   }
 }
 

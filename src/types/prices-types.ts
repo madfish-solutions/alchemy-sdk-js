@@ -1,4 +1,4 @@
-import { Network } from './types';
+import { Network } from './types.js';
 
 /**
  * The parameter field of {@link PricesNamespace.getTokenPriceByAddress}.

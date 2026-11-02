@@ -1,35 +1,21 @@
-import SturdyWebSocket from 'sturdy-websocket';
-
-import { Listener } from '@ethersproject/abstract-provider';
-import { BigNumber } from '@ethersproject/bignumber';
-import {
-  Networkish,
-  getNetwork as getNetworkFromEthers
-} from '@ethersproject/networks';
-import { Network as NetworkFromEthers } from '@ethersproject/networks/lib/types';
-import {
-  CommunityResourcable,
-  WebSocketProvider
-} from '@ethersproject/providers';
-
-import {
-  EthersEvent,
-  getAlchemyEventTag,
-  isAlchemyEvent,
-  verifyAlchemyEventName
-} from '../internal/ethers-event';
+import { fromHex } from '../api/util.js';
 import {
   ALCHEMY_EVENT_TYPES,
   ALCHEMY_MINED_TRANSACTIONS_EVENT_TYPE,
-  ALCHEMY_PENDING_TRANSACTIONS_EVENT_TYPE,
-  JsonRpcRequest,
-  JsonRpcResponse,
-  SingleOrBatchResponse,
-  SubscriptionEvent,
-  WebSocketMessage
-} from '../internal/internal-types';
+  ALCHEMY_PENDING_TRANSACTIONS_EVENT_TYPE
+} from '../internal/internal-types.js';
+import { jsonRpcWsUrl } from '../internal/network.js';
 import {
-  BatchPart,
+  ReconnectingWebSocket,
+  defaultWebSocketConstructor
+} from '../internal/reconnecting-websocket.js';
+import {
+  SubscriptionEvent,
+  getEventTag,
+  isAlchemyEvent,
+  verifyAlchemyEventName
+} from '../internal/subscription-event.js';
+import {
   LogsEvent,
   LogsSubscriptionFilter,
   NewHeadsEvent,
@@ -37,463 +23,201 @@ import {
   dedupeLogs,
   dedupeNewHeads,
   throwIfCancelled
-} from '../internal/websocket-backfiller';
-import { AlchemyEventType, AlchemySubscription } from '../types/types';
-import {
-  CustomNetworks,
-  DEFAULT_ALCHEMY_API_KEY,
-  EthersNetwork,
-  noop
-} from '../util/const';
-import { VERSION } from '../version';
-import { AlchemyConfig } from './alchemy-config';
-import { AlchemyProvider } from './alchemy-provider';
-import { fromHex } from './util';
+} from '../internal/websocket-backfiller.js';
+import type { Listener } from '../types/eth.js';
+import type { AlchemyEventType, Filter } from '../types/types.js';
+import { AlchemySubscription } from '../types/types.js';
+import { DEFAULT_ALCHEMY_API_KEY, noop } from '../util/const.js';
+import { VERSION } from '../version.js';
+import type { AlchemyConfig } from './alchemy-config.js';
 
 const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_WAIT_TIME = 10000;
 const BACKFILL_TIMEOUT = 60000;
 const BACKFILL_RETRIES = 5;
-/**
- * Subscriptions have a memory of recent events they have sent so that in the
- * event that they disconnect and need to backfill, they can detect re-orgs.
- * Keep a buffer that goes back at least these many blocks, the maximum amount
- * at which we might conceivably see a re-org.
- *
- * Note that while our buffer goes back this many blocks, it may contain more
- * than this many elements, since in the case of logs subscriptions more than
- * one event may be emitted for a block.
- */
 const RETAINED_EVENT_BLOCK_COUNT = 10;
+const MIN_RETRY_DELAY = 1000;
+const RETRY_BACKOFF_FACTOR = 2;
+const MAX_RETRY_DELAY = 30000;
+
+interface ProviderConfig {
+  apiKey?: string;
+  network?: string;
+  url?: string;
+}
 
 /**
- * SDK's custom implementation fo the ethers.js's 'AlchemyWebSocketProvider'.
+ * WebSocket subscriptions with reconnect and log/block backfill.
  *
- * Do not call this constructor directly. Instead, instantiate an instance of
- * {@link Alchemy} and call {@link Alchemy.config.getWebSocketProvider()}.
- *
- * @public
+ * This class does not extend an ethers provider. Subscriptions are emitted
+ * directly to listeners registered with {@link on}.
  */
-export class AlchemyWebSocketProvider
-  extends WebSocketProvider
-  implements CommunityResourcable
-{
-  _events: Array<EthersEvent> = [];
+export class AlchemyWebSocketProvider {
   readonly apiKey: string;
+  /** @internal */
+  readonly _websocket: ReconnectingWebSocket;
+  /** @internal */
+  _events: SubscriptionEvent[] = [];
 
-  // In the case of a WebSocket reconnection, all subscriptions are lost and we
-  // create new ones to replace them, but we want to create the illusion that
-  // the original subscriptions persist. Thus, maintain a mapping from the
-  // "virtual" subscription ids which are visible to the consumer to the
-  // "physical" subscription ids of the actual connections. This terminology is
-  // borrowed from virtual and physical memory, which has a similar mapping.
-  /** @internal */
-  private readonly virtualSubscriptionsById: Map<string, VirtualSubscription> =
-    new Map();
-  /** @internal */
-  private readonly virtualIdsByPhysicalId: Map<string, string> = new Map();
-  /** @internal */
+  private readonly virtualSubscriptionsById = new Map<
+    string,
+    VirtualSubscription
+  >();
+  private readonly virtualIdsByPhysicalId = new Map<string, string>();
   private readonly backfiller: WebsocketBackfiller;
-  /** @internal */
-  private heartbeatIntervalId?: NodeJS.Timeout;
-  /** @internal */
-  private cancelBackfill: () => void;
+  private readonly pending = new Map<
+    number,
+    { resolve: (value: any) => void; reject: (error: Error) => void }
+  >();
+  private readonly _subIds: Record<string, Promise<string>> = {};
+  private nextId = 0;
+  private heartbeatIntervalId?: ReturnType<typeof setInterval>;
+  private cancelBackfill: () => void = noop;
 
   /** @internal */
-  constructor(config: AlchemyConfig, wsConstructor?: any) {
-    // Normalize the API Key to a string.
-    const apiKey = AlchemyProvider.getApiKey(config.apiKey);
-
-    // Generate our own connection info with the correct endpoint URLs.
-    const alchemyNetwork = AlchemyProvider.getAlchemyNetwork(config.network);
-    const connection = AlchemyProvider.getAlchemyConnectionInfo(
-      alchemyNetwork,
-      apiKey,
-      'wss'
-    );
-
+  constructor(config: AlchemyConfig | ProviderConfig, wsConstructor?: any) {
+    this.apiKey = config.apiKey || DEFAULT_ALCHEMY_API_KEY;
+    const network = config.network || 'eth-mainnet';
+    const url = jsonRpcWsUrl(network, this.apiKey, config.url);
     const protocol = `alchemy-sdk-${VERSION}`;
-
-    // Use the provided config URL override if it exists, otherwise use the created one.
-    const ws = new SturdyWebSocket(config.url ?? connection.url, protocol, {
-      wsConstructor: wsConstructor ?? getWebsocketConstructor()
-    });
-
-    // Normalize the Alchemy named network input to the network names used by
-    // ethers. This allows the parent super constructor in JsonRpcProvider to
-    // correctly set the network.
-    const ethersNetwork = EthersNetwork[alchemyNetwork];
-    super(ws as any, ethersNetwork ?? undefined);
-    this.apiKey = apiKey;
-
-    // Start heartbeat and backfiller for the websocket connection.
+    const SocketCtor = wsConstructor ?? defaultWebSocketConstructor();
+    this._websocket = new ReconnectingWebSocket(url, protocol, SocketCtor);
     this.backfiller = new WebsocketBackfiller(this);
     this.addSocketListeners();
     this.startHeartbeat();
-    this.cancelBackfill = noop;
   }
 
-  /**
-   * Overrides the `BaseProvider.getNetwork` method as implemented by ethers.js.
-   *
-   * This override allows the SDK to set the provider's network to values not
-   * yet supported by ethers.js.
-   *
-   * @internal
-   * @override
-   */
-  static getNetwork(network: Networkish): NetworkFromEthers {
-    if (typeof network === 'string' && network in CustomNetworks) {
-      return CustomNetworks[network];
-    }
-
-    // Call the standard ethers.js getNetwork method for other networks.
-    return getNetworkFromEthers(network);
-  }
-
-  /**
-   * Overridden implementation of ethers that includes Alchemy based subscriptions.
-   *
-   * @param eventName Event to subscribe to
-   * @param listener The listener function to call when the event is triggered.
-   * @override
-   * @public
-   */
-  // TODO: Override `Listener` type to get type autocompletions.
   on(eventName: AlchemyEventType, listener: Listener): this {
     return this._addEventListener(eventName, listener, false);
   }
 
-  /**
-   * Overridden implementation of ethers that includes Alchemy based
-   * subscriptions. Adds a listener to the triggered for only the next
-   * {@link eventName} event, after which it will be removed.
-   *
-   * @param eventName Event to subscribe to
-   * @param listener The listener function to call when the event is triggered.
-   * @override
-   * @public
-   */
-  // TODO: Override `Listener` type to get type autocompletions.
   once(eventName: AlchemyEventType, listener: Listener): this {
     return this._addEventListener(eventName, listener, true);
   }
 
-  /**
-   * Removes the provided {@link listener} for the {@link eventName} event. If no
-   * listener is provided, all listeners for the event will be removed.
-   *
-   * @param eventName Event to unlisten to.
-   * @param listener The listener function to remove.
-   * @override
-   * @public
-   */
   off(eventName: AlchemyEventType, listener?: Listener): this {
-    if (isAlchemyEvent(eventName)) {
-      return this._off(eventName, listener);
-    } else {
-      return super.off(eventName, listener);
+    if (listener == null) {
+      return this.removeAllListeners(eventName);
     }
-  }
-
-  /**
-   * Remove all listeners for the provided {@link eventName} event. If no event
-   * is provided, all events and their listeners are removed.
-   *
-   * @param eventName The event to remove all listeners for.
-   * @override
-   * @public
-   */
-  removeAllListeners(eventName?: AlchemyEventType): this {
-    if (eventName !== undefined && isAlchemyEvent(eventName)) {
-      return this._removeAllListeners(eventName);
-    } else {
-      return super.removeAllListeners(eventName);
-    }
-  }
-
-  /**
-   * Returns the number of listeners for the provided {@link eventName} event. If
-   * no event is provided, the total number of listeners for all events is returned.
-   *
-   * @param eventName The event to get the number of listeners for.
-   * @public
-   * @override
-   */
-  listenerCount(eventName?: AlchemyEventType): number {
-    if (eventName !== undefined && isAlchemyEvent(eventName)) {
-      return this._listenerCount(eventName);
-    } else {
-      return super.listenerCount(eventName);
-    }
-  }
-
-  /**
-   * Returns an array of listeners for the provided {@link eventName} event. If
-   * no event is provided, all listeners will be included.
-   *
-   * @param eventName The event to get the listeners for.
-   * @public
-   * @override
-   */
-  listeners(eventName?: AlchemyEventType): Array<Listener> {
-    if (eventName !== undefined && isAlchemyEvent(eventName)) {
-      return this._listeners(eventName);
-    } else {
-      return super.listeners(eventName);
-    }
-  }
-
-  /**
-   * Overrides the method in `BaseProvider` in order to properly format the
-   * Alchemy subscription events.
-   *
-   * @internal
-   * @override
-   */
-  _addEventListener(
-    eventName: AlchemyEventType,
-    listener: Listener,
-    once: boolean
-  ): this {
-    if (isAlchemyEvent(eventName)) {
-      verifyAlchemyEventName(eventName);
-      const event = new EthersEvent(
-        getAlchemyEventTag(eventName),
-        listener,
-        once
-      );
-      this._events.push(event);
-      this._startEvent(event);
-      return this;
-    } else {
-      return super._addEventListener(eventName, listener, once);
-    }
-  }
-
-  /**
-   * Overrides the `_startEvent()` method in ethers.js's
-   * {@link WebSocketProvider} to include additional alchemy methods.
-   *
-   * @param event
-   * @override
-   * @internal
-   */
-  _startEvent(event: EthersEvent): void {
-    // Check if the event type is a custom Alchemy subscription.
-    const customLogicTypes = [...ALCHEMY_EVENT_TYPES, 'block', 'filter'];
-    if (customLogicTypes.includes(event.type)) {
-      this.customStartEvent(event);
-    } else {
-      super._startEvent(event);
-    }
-  }
-
-  /**
-   * Overridden from ethers.js's {@link WebSocketProvider}
-   *
-   * Modified in order to add mappings for backfilling.
-   *
-   * @internal
-   * @override
-   */
-  async _subscribe(
-    tag: string,
-    param: Array<any>,
-    processFunc: (result: any) => void,
-    event?: EthersEvent
-  ): Promise<void> {
-    let subIdPromise = this._subIds[tag];
-
-    // BEGIN MODIFIED CODE
-    const startingBlockNumber = await this.getBlockNumber();
-    // END MODIFIED CODE
-
-    if (subIdPromise == null) {
-      subIdPromise = Promise.all(param).then(param => {
-        return this.send('eth_subscribe', param);
-      });
-      this._subIds[tag] = subIdPromise;
-    }
-    const subId = await subIdPromise;
-
-    // BEGIN MODIFIED CODE
-    const resolvedParams = await Promise.all(param);
-    this.virtualSubscriptionsById.set(subId, {
-      event: event!,
-      method: 'eth_subscribe',
-      params: resolvedParams,
-      startingBlockNumber,
-      virtualId: subId,
-      physicalId: subId,
-      sentEvents: [],
-      isBackfilling: false,
-      backfillBuffer: []
+    const stopped: SubscriptionEvent[] = [];
+    let found = false;
+    const eventTag = getEventTag(eventName);
+    this._events = this._events.filter(event => {
+      if (event.tag !== eventTag || event.listener !== listener) {
+        return true;
+      }
+      if (found) {
+        return true;
+      }
+      found = true;
+      stopped.push(event);
+      return false;
     });
-    this.virtualIdsByPhysicalId.set(subId, subId);
-
-    // END MODIFIED CODE
-
-    this._subs[subId] = { tag, processFunc };
+    stopped.forEach(event => this._stopEvent(event));
+    return this;
   }
 
-  /**
-   * DO NOT MODIFY.
-   *
-   * Original code copied over from ether.js's `BaseProvider`.
-   *
-   * This method is copied over directly in order to implement Alchemy's unique
-   * subscription types. The only difference is that this method calls
-   * {@link getAlchemyEventTag} instead of the original `getEventTag()` method in
-   * order to parse the Alchemy subscription event.
-   *
-   * @internal
-   * @override
-   */
-  emit(eventName: AlchemyEventType, ...args: Array<any>): boolean {
-    if (isAlchemyEvent(eventName)) {
-      let result = false;
-
-      const stopped: Array<EthersEvent> = [];
-
-      // This line is the only modified line from the original method.
-      const eventTag = getAlchemyEventTag(eventName);
-
+  removeAllListeners(eventName?: AlchemyEventType): this {
+    let stopped: SubscriptionEvent[] = [];
+    if (eventName == null) {
+      stopped = this._events;
+      this._events = [];
+    } else {
+      const eventTag = getEventTag(eventName);
       this._events = this._events.filter(event => {
         if (event.tag !== eventTag) {
           return true;
         }
-
-        setTimeout(() => {
-          event.listener.apply(this, args);
-        }, 0);
-
-        result = true;
-
-        if (event.once) {
-          stopped.push(event);
-          return false;
-        }
-
-        return true;
+        stopped.push(event);
+        return false;
       });
-
-      stopped.forEach(event => {
-        this._stopEvent(event);
-      });
-
-      return result;
-    } else {
-      return super.emit(eventName, ...args);
     }
+    stopped.forEach(event => this._stopEvent(event));
+    return this;
   }
 
-  /** @internal */
-  async sendBatch(parts: BatchPart[]): Promise<any[]> {
-    let nextId = 0;
-    const payload: JsonRpcRequest[] = parts.map(({ method, params }) => {
-      return {
-        method,
-        params,
-        jsonrpc: '2.0',
-        id: `alchemy-sdk:${nextId++}`
-      };
-    });
-
-    return this.sendBatchConcurrently(payload);
+  listenerCount(eventName?: AlchemyEventType): number {
+    if (!eventName) {
+      return this._events.length;
+    }
+    const eventTag = getEventTag(eventName);
+    return this._events.filter(event => event.tag === eventTag).length;
   }
 
-  /** @override */
-  destroy(): Promise<void> {
-    this.removeSocketListeners();
-    this.stopHeartbeatAndBackfill();
-    return super.destroy();
+  listeners(eventName?: AlchemyEventType): Listener[] {
+    if (eventName == null) {
+      return this._events.map(event => event.listener);
+    }
+    const eventTag = getEventTag(eventName);
+    return this._events
+      .filter(event => event.tag === eventTag)
+      .map(event => event.listener);
   }
 
   /**
-   * Overrides the ether's `isCommunityResource()` method. Returns true if the
-   * current api key is the default key.
+   * Sends one JSON-RPC request over the socket.
    *
-   * @override
+   * @internal
    */
+  send(method: string, params: any[] = []): Promise<any> {
+    const id = ++this.nextId;
+    const payload = JSON.stringify({
+      jsonrpc: '2.0',
+      id,
+      method,
+      params
+    });
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      try {
+        this._websocket.send(payload);
+      } catch (error) {
+        this.pending.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  /** @internal */
+  async sendBatch(
+    parts: Array<{ method: string; params?: any[] }>
+  ): Promise<any[]> {
+    return Promise.all(parts.map(part => this.send(part.method, part.params)));
+  }
+
+  async getBlockNumber(): Promise<number> {
+    const hex: string = await this.send('eth_blockNumber');
+    return fromHex(hex);
+  }
+
+  destroy(): Promise<void> {
+    this.removeSocketListeners();
+    this.stopHeartbeatAndBackfill();
+    this._websocket.close();
+    return Promise.resolve();
+  }
+
   isCommunityResource(): boolean {
     return this.apiKey === DEFAULT_ALCHEMY_API_KEY;
   }
 
-  /**
-   * DO NOT MODIFY.
-   *
-   * Original code copied over from ether.js's `WebSocketProvider._stopEvent()`.
-   *
-   * This method is copied over directly in order to support Alchemy's
-   * subscription type by allowing the provider to properly stop Alchemy's
-   * subscription events.
-   *
-   * @internal
-   */
-  _stopEvent(event: EthersEvent): void {
-    let tag = event.tag;
-
-    // START MODIFIED CODE
-    if (ALCHEMY_EVENT_TYPES.includes(event.type)) {
-      // There are remaining pending transaction listeners.
-      if (
-        this._events.filter(e => ALCHEMY_EVENT_TYPES.includes(e.type)).length
-      ) {
+  private readonly handleMessage = (event: { data?: string }): void => {
+    const message = JSON.parse(event.data ?? '');
+    if (message.id != null && message.method !== 'eth_subscription') {
+      const waiter = this.pending.get(message.id);
+      if (!waiter) {
         return;
       }
-      // END MODIFIED CODE
-    } else if (event.type === 'tx') {
-      // There are remaining transaction event listeners
-      if (this._events.filter(e => e.type === 'tx').length) {
-        return;
+      this.pending.delete(message.id);
+      if (message.error) {
+        waiter.reject(
+          new Error(message.error.message ?? JSON.stringify(message.error))
+        );
+      } else {
+        waiter.resolve(message.result);
       }
-      tag = 'tx';
-    } else if (this.listenerCount(event.event)) {
-      // There are remaining event listeners
       return;
     }
-
-    const subId = this._subIds[tag];
-    if (!subId) {
-      return;
-    }
-
-    delete this._subIds[tag];
-    void subId.then(subId => {
-      if (!this._subs[subId]) {
-        return;
-      }
-      delete this._subs[subId];
-      void this.send('eth_unsubscribe', [subId]);
-    });
-  }
-
-  /** @internal */
-  private addSocketListeners(): void {
-    this._websocket.addEventListener('message', this.handleMessage);
-    this._websocket.addEventListener('reopen', this.handleReopen);
-    this._websocket.addEventListener('down', this.stopHeartbeatAndBackfill);
-  }
-
-  /** @internal */
-  private removeSocketListeners(): void {
-    this._websocket.removeEventListener('message', this.handleMessage);
-    this._websocket.removeEventListener('reopen', this.handleReopen);
-    this._websocket.removeEventListener('down', this.stopHeartbeatAndBackfill);
-  }
-
-  /**
-   * The underlying ethers {@link WebSocketProvider} already handles and emits
-   * messages. To allow backfilling, track all messages that are emitted.
-   *
-   * This is a field arrow function in order to preserve `this` context when
-   * passing the method as an event listener.
-   *
-   * @internal
-   */
-  private handleMessage = (event: MessageEvent): void => {
-    const message: WebSocketMessage = JSON.parse(event.data);
     if (!isSubscriptionEvent(message)) {
       return;
     }
@@ -502,73 +226,50 @@ export class AlchemyWebSocketProvider
     if (!virtualId) {
       return;
     }
-    const subscription = this.virtualSubscriptionsById.get(virtualId)!;
-    if (subscription.method !== 'eth_subscribe') {
+    const subscription = this.virtualSubscriptionsById.get(virtualId);
+    if (!subscription || subscription.method !== 'eth_subscribe') {
       return;
     }
-
+    const result = message.params.result;
     switch (subscription.params[0]) {
       case 'newHeads': {
-        const newHeadsSubscription = subscription as NewHeadsSubscription;
-        const newHeadsMessage = message as SubscriptionEvent<NewHeadsEvent>;
-        const { isBackfilling, backfillBuffer } = newHeadsSubscription;
-        const { result } = newHeadsMessage.params;
-        if (isBackfilling) {
-          addToNewHeadsEventsBuffer(backfillBuffer, result);
-        } else if (physicalId !== virtualId) {
-          // In the case of a re-opened subscription, ethers will not emit the
-          // event, so the SDK has to.
-          this.emitAndRememberEvent(virtualId, result, getNewHeadsBlockNumber);
+        const heads = subscription as NewHeadsSubscription;
+        if (heads.isBackfilling) {
+          addToPastEventsBuffer(
+            heads.backfillBuffer,
+            result,
+            getNewHeadsBlockNumber
+          );
         } else {
-          // Ethers subscription mapping will emit the event, just store it.
-          this.rememberEvent(virtualId, result, getNewHeadsBlockNumber);
+          this.emitAndRememberEvent(virtualId, result, getNewHeadsBlockNumber);
         }
         break;
       }
       case 'logs': {
-        const logsSubscription = subscription as LogsSubscription;
-        const logsMessage = message as SubscriptionEvent<LogsEvent>;
-        const { isBackfilling, backfillBuffer } = logsSubscription;
-        const { result } = logsMessage.params;
-        if (isBackfilling) {
-          addToLogsEventsBuffer(backfillBuffer, result);
-        } else if (virtualId !== physicalId) {
-          this.emitAndRememberEvent(virtualId, result, getLogsBlockNumber);
+        const logs = subscription as LogsSubscription;
+        if (logs.isBackfilling) {
+          addToPastEventsBuffer(
+            logs.backfillBuffer,
+            result,
+            getLogsBlockNumber
+          );
         } else {
-          this.rememberEvent(virtualId, result, getLogsBlockNumber);
+          this.emitAndRememberEvent(virtualId, result, getLogsBlockNumber);
         }
         break;
       }
       default:
-        if (physicalId !== virtualId) {
-          // In the case of a re-opened subscription, ethers will not emit the
-          // event, so the SDK has to.
-          const { result } = (message as SubscriptionEvent<unknown>).params;
-          this.emitEvent(virtualId, result);
-        }
+        this.emitEvent(virtualId, result);
     }
   };
 
-  /**
-   * When the websocket connection reopens:
-   *
-   * 1. Resubscribe to all existing subscriptions and start backfilling
-   * 2. Restart heart beat.
-   *
-   * This is a field arrow function in order to preserve `this` context when
-   * passing the method as an event listener.
-   *
-   * @internal
-   */
-  private handleReopen = () => {
+  private readonly handleReopen = (): void => {
     this.virtualIdsByPhysicalId.clear();
     const { cancel, isCancelled } = makeCancelToken();
     this.cancelBackfill = cancel;
     for (const subscription of this.virtualSubscriptionsById.values()) {
-      void (async () => {
-        try {
-          await this.resubscribeAndBackfill(isCancelled, subscription);
-        } catch (error) {
+      void this.resubscribeAndBackfill(isCancelled, subscription).catch(
+        error => {
           if (!isCancelled()) {
             console.error(
               `Error while backfilling "${subscription.params[0]}" subscription. Some events may be missing.`,
@@ -576,18 +277,155 @@ export class AlchemyWebSocketProvider
             );
           }
         }
-      })();
+      );
     }
     this.startHeartbeat();
   };
 
-  /**
-   * Reopens the backfill based on
-   *
-   * @param isCancelled
-   * @param subscription
-   * @internal
-   */
+  private readonly stopHeartbeatAndBackfill = (): void => {
+    if (this.heartbeatIntervalId != null) {
+      clearInterval(this.heartbeatIntervalId);
+      this.heartbeatIntervalId = undefined;
+    }
+    this.cancelBackfill();
+  };
+
+  private _addEventListener(
+    eventName: AlchemyEventType,
+    listener: Listener,
+    once: boolean
+  ): this {
+    if (isAlchemyEvent(eventName)) {
+      verifyAlchemyEventName(eventName);
+    }
+    const event = new SubscriptionEvent(getEventTag(eventName), listener, once);
+    this._events.push(event);
+    this._startEvent(event);
+    return this;
+  }
+
+  private _startEvent(event: SubscriptionEvent): void {
+    if (event.type === ALCHEMY_PENDING_TRANSACTIONS_EVENT_TYPE) {
+      void this._subscribe(
+        event.tag,
+        [
+          AlchemySubscription.PENDING_TRANSACTIONS,
+          {
+            fromAddress: event.fromAddress,
+            toAddress: event.toAddress,
+            hashesOnly: event.hashesOnly
+          }
+        ],
+        event
+      );
+    } else if (event.type === ALCHEMY_MINED_TRANSACTIONS_EVENT_TYPE) {
+      void this._subscribe(
+        event.tag,
+        [
+          AlchemySubscription.MINED_TRANSACTIONS,
+          {
+            addresses: event.addresses,
+            includeRemoved: event.includeRemoved,
+            hashesOnly: event.hashesOnly
+          }
+        ],
+        event
+      );
+    } else if (event.type === 'block') {
+      void this._subscribe('block', ['newHeads'], event);
+    } else if (event.type === 'filter') {
+      void this._subscribe(
+        event.tag,
+        ['logs', this._getFilter(event.filter)],
+        event
+      );
+    }
+  }
+
+  /** @internal */
+  private async _subscribe(
+    tag: string,
+    param: any[],
+    event: SubscriptionEvent
+  ): Promise<void> {
+    let subIdPromise = this._subIds[tag];
+    const startingBlockNumber = await this.getBlockNumber();
+    if (subIdPromise == null) {
+      subIdPromise = this.send('eth_subscribe', param);
+      this._subIds[tag] = subIdPromise;
+    }
+    const subId = await subIdPromise;
+    this.virtualSubscriptionsById.set(subId, {
+      event,
+      method: 'eth_subscribe',
+      params: param,
+      startingBlockNumber,
+      virtualId: subId,
+      physicalId: subId,
+      sentEvents: [],
+      isBackfilling: false,
+      backfillBuffer: []
+    });
+    this.virtualIdsByPhysicalId.set(subId, subId);
+  }
+
+  private _stopEvent(event: SubscriptionEvent): void {
+    const tag = event.tag;
+    if (ALCHEMY_EVENT_TYPES.includes(event.type)) {
+      if (
+        this._events.filter(e => ALCHEMY_EVENT_TYPES.includes(e.type)).length
+      ) {
+        return;
+      }
+    } else if (this.listenerCount(event.event)) {
+      return;
+    }
+    const subId = this._subIds[tag];
+    if (!subId) {
+      return;
+    }
+    delete this._subIds[tag];
+    void subId.then(id => {
+      this.virtualSubscriptionsById.delete(id);
+      this.virtualIdsByPhysicalId.delete(id);
+      void this.send('eth_unsubscribe', [id]);
+    });
+  }
+
+  private emit(eventName: AlchemyEventType, ...args: any[]): boolean {
+    let result = false;
+    const stopped: SubscriptionEvent[] = [];
+    const eventTag = getEventTag(eventName);
+    this._events = this._events.filter(event => {
+      if (event.tag !== eventTag) {
+        return true;
+      }
+      setTimeout(() => {
+        event.listener.apply(this, args);
+      }, 0);
+      result = true;
+      if (event.once) {
+        stopped.push(event);
+        return false;
+      }
+      return true;
+    });
+    stopped.forEach(event => this._stopEvent(event));
+    return result;
+  }
+
+  private addSocketListeners(): void {
+    this._websocket.addEventListener('message', this.handleMessage);
+    this._websocket.addEventListener('reopen', this.handleReopen);
+    this._websocket.addEventListener('down', this.stopHeartbeatAndBackfill);
+  }
+
+  private removeSocketListeners(): void {
+    this._websocket.removeEventListener('message', this.handleMessage);
+    this._websocket.removeEventListener('reopen', this.handleReopen);
+    this._websocket.removeEventListener('down', this.stopHeartbeatAndBackfill);
+  }
+
   private async resubscribeAndBackfill(
     isCancelled: () => boolean,
     subscription: VirtualSubscription
@@ -624,7 +462,9 @@ export class AlchemyWebSocketProvider
           );
           throwIfCancelled(isCancelled);
           const events = dedupeNewHeads([...backfillEvents, ...backfillBuffer]);
-          events.forEach(event => this.emitNewHeadsEvent(virtualId, event));
+          events.forEach(event =>
+            this.emitAndRememberEvent(virtualId, event, getNewHeadsBlockNumber)
+          );
           break;
         }
         case 'logs': {
@@ -645,7 +485,9 @@ export class AlchemyWebSocketProvider
           );
           throwIfCancelled(isCancelled);
           const events = dedupeLogs([...backfillEvents, ...backfillBuffer]);
-          events.forEach(event => this.emitLogsEvent(virtualId, event));
+          events.forEach(event =>
+            this.emitAndRememberEvent(virtualId, event, getLogsBlockNumber)
+          );
           break;
         }
         default:
@@ -657,46 +499,12 @@ export class AlchemyWebSocketProvider
     }
   }
 
-  /**
-   * Cancels the heartbeat and any pending backfills being performed. This is
-   * called when the websocket connection goes down or is disconnected.
-   *
-   * This is a field arrow function in order to preserve `this` context when
-   * passing the method as an event listener.
-   *
-   * @internal
-   */
-  private stopHeartbeatAndBackfill = () => {
-    if (this.heartbeatIntervalId != null) {
-      clearInterval(this.heartbeatIntervalId);
-      this.heartbeatIntervalId = undefined;
-    }
-    this.cancelBackfill();
-  };
-
-  /** @internal */
-  private emitNewHeadsEvent(virtualId: string, result: NewHeadsEvent): void {
-    this.emitAndRememberEvent(virtualId, result, getNewHeadsBlockNumber);
-  }
-
-  /** @internal */
-  private emitLogsEvent(virtualId: string, result: LogsEvent): void {
-    this.emitAndRememberEvent(virtualId, result, getLogsBlockNumber);
-  }
-
-  /**
-   * Emits an event to consumers, but also remembers it in its subscriptions's
-   * `sentEvents` buffer so that we can detect re-orgs if the connection drops
-   * and needs to be reconnected.
-   *
-   * @internal
-   */
   private emitAndRememberEvent<T>(
     virtualId: string,
     result: T,
-    getBlockNumber: (result: T) => number
+    blockNumberOf: (result: T) => number
   ): void {
-    this.rememberEvent(virtualId, result, getBlockNumber);
+    this.rememberEvent(virtualId, result, blockNumberOf);
     this.emitEvent(virtualId, result);
   }
 
@@ -708,298 +516,102 @@ export class AlchemyWebSocketProvider
     this.emitGenericEvent(subscription, result);
   }
 
-  /** @internal */
   private rememberEvent<T>(
     virtualId: string,
     result: T,
-    getBlockNumber: (result: T) => number
+    blockNumberOf: (result: T) => number
   ): void {
     const subscription = this.virtualSubscriptionsById.get(virtualId);
     if (!subscription) {
       return;
     }
-    // Web3 modifies these event objects once we pass them on (changing hex
-    // numbers to numbers). We want the original event, so make a defensive
-    // copy.
     addToPastEventsBuffer(
       subscription.sentEvents,
-      { ...result },
-      getBlockNumber
+      { ...(result as object) } as T,
+      blockNumberOf
     );
   }
 
-  /** @internal */
   private emitGenericEvent(
     subscription: VirtualSubscription,
     result: any
   ): void {
-    const emitFunction = this.emitProcessFn(subscription.event);
-    emitFunction(result);
+    const event = subscription.event;
+    switch (event.type) {
+      case ALCHEMY_PENDING_TRANSACTIONS_EVENT_TYPE:
+        this.emit(
+          {
+            method: AlchemySubscription.PENDING_TRANSACTIONS,
+            fromAddress: event.fromAddress,
+            toAddress: event.toAddress,
+            hashesOnly: event.hashesOnly
+          },
+          result
+        );
+        return;
+      case ALCHEMY_MINED_TRANSACTIONS_EVENT_TYPE:
+        this.emit(
+          {
+            method: AlchemySubscription.MINED_TRANSACTIONS,
+            addresses: event.addresses,
+            includeRemoved: event.includeRemoved,
+            hashesOnly: event.hashesOnly
+          },
+          result
+        );
+        return;
+      case 'block':
+        this.emit('block', fromHex(result.number));
+        return;
+      case 'filter':
+        if (result.removed == null) {
+          result.removed = false;
+        }
+        this.emit(event.filter, result);
+        return;
+      default:
+        throw new Error('Invalid event type to emit');
+    }
   }
 
-  /**
-   * Starts a heartbeat that pings the websocket server periodically to ensure
-   * that the connection stays open.
-   *
-   * @internal
-   */
   private startHeartbeat(): void {
     if (this.heartbeatIntervalId != null) {
       return;
     }
-    this.heartbeatIntervalId = setInterval(async () => {
-      try {
-        await withTimeout(this.send('net_version'), HEARTBEAT_WAIT_TIME);
-      } catch {
-        this._websocket.reconnect();
-      }
-    }, HEARTBEAT_INTERVAL);
-  }
-
-  /**
-   * This method sends the batch concurrently as individual requests rather than
-   * as a batch, which was the original implementation. The original batch logic
-   * is preserved in this implementation in order for faster porting.
-   *
-   * @param payload
-   * @internal
-   */
-  // TODO(cleanup): Refactor and remove usages of `sendBatch()`.
-  // TODO(errors): Use allSettled() once we have more error handling.
-  private async sendBatchConcurrently(
-    payload: JsonRpcRequest[]
-  ): Promise<unknown[]> {
-    return Promise.all(payload.map(req => this.send(req.method, req.params)));
-  }
-
-  /** @internal */
-  private customStartEvent(event: EthersEvent): void {
-    if (event.type === ALCHEMY_PENDING_TRANSACTIONS_EVENT_TYPE) {
-      const { fromAddress, toAddress, hashesOnly } = event;
-      void this._subscribe(
-        event.tag,
-        [
-          AlchemySubscription.PENDING_TRANSACTIONS,
-          { fromAddress, toAddress, hashesOnly }
-        ],
-        this.emitProcessFn(event),
-        event
-      );
-    } else if (event.type === ALCHEMY_MINED_TRANSACTIONS_EVENT_TYPE) {
-      const { addresses, includeRemoved, hashesOnly } = event;
-      void this._subscribe(
-        event.tag,
-        [
-          AlchemySubscription.MINED_TRANSACTIONS,
-          { addresses, includeRemoved, hashesOnly }
-        ],
-        this.emitProcessFn(event),
-        event
-      );
-    } else if (event.type === 'block') {
-      void this._subscribe(
-        'block',
-        ['newHeads'],
-        this.emitProcessFn(event),
-        event
-      );
-    } else if (event.type === 'filter') {
-      void this._subscribe(
-        event.tag,
-        ['logs', this._getFilter(event.filter)],
-        this.emitProcessFn(event),
-        event
-      );
-    }
-  }
-
-  /** @internal */
-  private emitProcessFn(event: EthersEvent): (result: any) => void {
-    switch (event.type) {
-      case ALCHEMY_PENDING_TRANSACTIONS_EVENT_TYPE:
-        return result =>
-          this.emit(
-            {
-              method: AlchemySubscription.PENDING_TRANSACTIONS,
-              fromAddress: event.fromAddress,
-              toAddress: event.toAddress,
-              hashesOnly: event.hashesOnly
-            },
-            result
-          );
-      case ALCHEMY_MINED_TRANSACTIONS_EVENT_TYPE:
-        return result =>
-          this.emit(
-            {
-              method: AlchemySubscription.MINED_TRANSACTIONS,
-              addresses: event.addresses,
-              includeRemoved: event.includeRemoved,
-              hashesOnly: event.hashesOnly
-            },
-            result
-          );
-      case 'block':
-        return result => {
-          const blockNumber = BigNumber.from(result.number).toNumber();
-          this._emitted.block = blockNumber;
-          this.emit('block', blockNumber);
-        };
-      case 'filter':
-        return result => {
-          if (result.removed == null) {
-            result.removed = false;
-          }
-          this.emit(event.filter, this.formatter.filterLog(result));
-        };
-      default:
-        throw new Error('Invalid event type to `emitProcessFn()`');
-    }
-  }
-
-  /**
-   * DO NOT MODIFY.
-   *
-   * Original code copied over from ether.js's `BaseProvider.off()`.
-   *
-   * This method is copied over directly in order to implement Alchemy's unique
-   * subscription types. The only difference is that this method calls
-   * {@link getAlchemyEventTag} instead of the original `getEventTag()` method in
-   * order to parse the Alchemy subscription event.
-   *
-   * @private
-   */
-  private _off(eventName: AlchemyEventType, listener?: Listener): this {
-    if (listener == null) {
-      return this.removeAllListeners(eventName);
-    }
-
-    const stopped: Array<EthersEvent> = [];
-
-    let found = false;
-    const eventTag = getAlchemyEventTag(eventName);
-    this._events = this._events.filter(event => {
-      if (event.tag !== eventTag || event.listener != listener) {
-        return true;
-      }
-      if (found) {
-        return true;
-      }
-      found = true;
-      stopped.push(event);
-      return false;
-    });
-
-    stopped.forEach(event => {
-      this._stopEvent(event);
-    });
-
-    return this;
-  }
-
-  /**
-   * DO NOT MODIFY.
-   *
-   * Original code copied over from ether.js's `BaseProvider.removeAllListeners()`.
-   *
-   * This method is copied over directly in order to implement Alchemy's unique
-   * subscription types. The only difference is that this method calls
-   * {@link getAlchemyEventTag} instead of the original `getEventTag()` method in
-   * order to parse the Alchemy subscription event.
-   *
-   * @private
-   */
-  private _removeAllListeners(eventName: AlchemyEventType): this {
-    let stopped: Array<EthersEvent> = [];
-    if (eventName == null) {
-      stopped = this._events;
-
-      this._events = [];
-    } else {
-      const eventTag = getAlchemyEventTag(eventName);
-      this._events = this._events.filter(event => {
-        if (event.tag !== eventTag) {
-          return true;
+    const timer = setInterval(() => {
+      void withTimeout(this.send('net_version'), HEARTBEAT_WAIT_TIME).catch(
+        () => {
+          this._websocket.reconnect();
         }
-        stopped.push(event);
-        return false;
-      });
+      );
+    }, HEARTBEAT_INTERVAL);
+    const unref = (timer as { unref?: () => void }).unref;
+    if (unref) {
+      unref.call(timer);
     }
-
-    stopped.forEach(event => {
-      this._stopEvent(event);
-    });
-
-    return this;
+    this.heartbeatIntervalId = timer;
   }
 
-  /**
-   * DO NOT MODIFY.
-   *
-   * Original code copied over from ether.js's `BaseProvider.listenerCount()`.
-   *
-   * This method is copied over directly in order to implement Alchemy's unique
-   * subscription types. The only difference is that this method calls
-   * {@link getAlchemyEventTag} instead of the original `getEventTag()` method in
-   * order to parse the Alchemy subscription event.
-   *
-   * @private
-   */
-  private _listenerCount(eventName?: AlchemyEventType): number {
-    if (!eventName) {
-      return this._events.length;
+  private _getFilter(filter: Filter): {
+    address?: string | string[];
+    topics?: Array<string | Array<string> | null>;
+  } {
+    const result: {
+      address?: string | string[];
+      topics?: Array<string | Array<string> | null>;
+    } = {};
+    if (filter.address != null) {
+      result.address = filter.address;
     }
-
-    const eventTag = getAlchemyEventTag(eventName);
-    return this._events.filter(event => {
-      return event.tag === eventTag;
-    }).length;
-  }
-
-  /**
-   * DO NOT MODIFY.
-   *
-   * Original code copied over from ether.js's `BaseProvider.listeners()`.
-   *
-   * This method is copied over directly in order to implement Alchemy's unique
-   * subscription types. The only difference is that this method calls
-   * {@link getAlchemyEventTag} instead of the original `getEventTag()` method in
-   * order to parse the Alchemy subscription event.
-   *
-   * @private
-   */
-  private _listeners(eventName?: AlchemyEventType): Array<Listener> {
-    if (eventName == null) {
-      return this._events.map(event => event.listener);
+    if (filter.topics != null) {
+      result.topics = filter.topics;
     }
-
-    const eventTag = getAlchemyEventTag(eventName);
-    return this._events
-      .filter(event => event.tag === eventTag)
-      .map(event => event.listener);
+    return result;
   }
-}
-
-function getWebsocketConstructor(): any {
-  return isNodeEnvironment() ? require('websocket').w3cwebsocket : WebSocket;
-}
-
-function isNodeEnvironment(): boolean {
-  return (
-    typeof process !== 'undefined' &&
-    process != null &&
-    process.versions != null &&
-    process.versions.node != null
-  );
-}
-
-/** @internal */
-interface CancelToken {
-  cancel(): void;
-  isCancelled(): boolean;
 }
 
 interface VirtualSubscription {
-  event: EthersEvent;
+  event: SubscriptionEvent;
   virtualId: string;
   physicalId: string;
   method: string;
@@ -1011,31 +623,36 @@ interface VirtualSubscription {
 }
 
 interface NewHeadsSubscription extends VirtualSubscription {
-  method: 'eth_subscribe';
   params: ['newHeads'];
-  isBackfilling: boolean;
   sentEvents: NewHeadsEvent[];
   backfillBuffer: NewHeadsEvent[];
 }
 
 interface LogsSubscription extends VirtualSubscription {
-  method: 'eth_subscribe';
   params: ['logs', LogsSubscriptionFilter?];
-  isBackfilling: boolean;
   sentEvents: LogsEvent[];
   backfillBuffer: LogsEvent[];
 }
 
-// TODO(cleanup): Use class variable rather than passing `isCancelled` everywhere.
-function makeCancelToken(): CancelToken {
-  let cancelled = false;
-  return { cancel: () => (cancelled = true), isCancelled: () => cancelled };
+function isSubscriptionEvent(message: any): message is {
+  params: { subscription: string; result: any };
+} {
+  return (
+    message != null &&
+    message.method === 'eth_subscription' &&
+    message.params != null
+  );
 }
 
-// TODO(cleanup): replace with SDK's backoff implementation
-const MIN_RETRY_DELAY = 1000;
-const RETRY_BACKOFF_FACTOR = 2;
-const MAX_RETRY_DELAY = 30000;
+function makeCancelToken(): { cancel: () => void; isCancelled: () => boolean } {
+  let cancelled = false;
+  return {
+    cancel: () => {
+      cancelled = true;
+    },
+    isCancelled: () => cancelled
+  };
+}
 
 async function withBackoffRetries<T>(
   f: () => Promise<T>,
@@ -1053,9 +670,6 @@ async function withBackoffRetries<T>(
         throw error;
       }
       await delay(nextWaitTime);
-      if (!shouldRetry(error)) {
-        throw error;
-      }
       nextWaitTime =
         nextWaitTime === 0
           ? MIN_RETRY_DELAY
@@ -1085,49 +699,15 @@ function getLogsBlockNumber(event: LogsEvent): number {
   return fromHex(event.blockNumber);
 }
 
-function isResponse(
-  message: WebSocketMessage
-): message is SingleOrBatchResponse {
-  return (
-    Array.isArray(message) ||
-    (message.jsonrpc === '2.0' && (message as JsonRpcResponse).id !== undefined)
-  );
-}
-
-function isSubscriptionEvent(
-  message: WebSocketMessage
-): message is SubscriptionEvent {
-  return !isResponse(message);
-}
-
-function addToNewHeadsEventsBuffer(
-  pastEvents: NewHeadsEvent[],
-  event: NewHeadsEvent
-): void {
-  addToPastEventsBuffer(pastEvents, event, getNewHeadsBlockNumber);
-}
-
-function addToLogsEventsBuffer(
-  pastEvents: LogsEvent[],
-  event: LogsEvent
-): void {
-  addToPastEventsBuffer(pastEvents, event, getLogsBlockNumber);
-}
-
-/**
- * Adds a new event to an array of events, evicting any events which are so old
- * that they will no longer feasibly be part of a reorg.
- */
 function addToPastEventsBuffer<T>(
   pastEvents: T[],
   event: T,
-  getBlockNumber: (event: T) => number
+  blockNumberOf: (event: T) => number
 ): void {
-  const currentBlockNumber = getBlockNumber(event);
-  // Find first index of an event recent enough to retain, then drop everything
-  // at a lower index.
+  const currentBlockNumber = blockNumberOf(event);
   const firstGoodIndex = pastEvents.findIndex(
-    e => getBlockNumber(e) > currentBlockNumber - RETAINED_EVENT_BLOCK_COUNT
+    item =>
+      blockNumberOf(item) > currentBlockNumber - RETAINED_EVENT_BLOCK_COUNT
   );
   if (firstGoodIndex === -1) {
     pastEvents.length = 0;

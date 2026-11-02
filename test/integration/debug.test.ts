@@ -1,6 +1,10 @@
-import { Alchemy, CommitmentLevel, DebugTracerType } from '../../src';
-import { Utils } from '../../src/index';
-import { loadAlchemyEnv } from '../test-util';
+import {
+  Alchemy,
+  CommitmentLevel,
+  DebugTracerType,
+  toHex
+} from '../../src/index.js';
+import { loadAlchemyEnv } from '../test-util.js';
 
 describe('DebugNamespace', () => {
   let alchemy: Alchemy;
@@ -83,17 +87,15 @@ describe('DebugNamespace', () => {
     const finalizedBlock = await alchemy.core.getBlock(
       CommitmentLevel.FINALIZED
     );
-    const response = await alchemy.debug.traceBlock(finalizedBlock.number, {
+    const blockNumber = finalizedBlock.number ?? 0;
+    const response = await alchemy.debug.traceBlock(blockNumber, {
       type: DebugTracerType.CALL_TRACER,
       onlyTopCall: true
     });
-    const response2 = await alchemy.debug.traceBlock(
-      Utils.hexStripZeros(Utils.hexValue(finalizedBlock.number)),
-      {
-        type: DebugTracerType.CALL_TRACER,
-        onlyTopCall: true
-      }
-    );
+    const response2 = await alchemy.debug.traceBlock(toHex(blockNumber), {
+      type: DebugTracerType.CALL_TRACER,
+      onlyTopCall: true
+    });
 
     expect(response).toEqual(response2);
 

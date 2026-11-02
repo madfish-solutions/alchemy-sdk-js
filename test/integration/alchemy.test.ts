@@ -1,5 +1,5 @@
-import { Alchemy, Network } from '../../src';
-import { Deferred, loadAlchemyEnv } from '../test-util';
+import { Alchemy, Network } from '../../src/index.js';
+import { Deferred, loadAlchemyEnv } from '../test-util.js';
 
 jest.setTimeout(50000);
 describe('E2E integration tests', () => {
@@ -9,16 +9,33 @@ describe('E2E integration tests', () => {
   describe('handles networks', () => {
     // TODO(deprecation): Remove after removing deprecated networks.
     const deprecated = [
-      'ropsten',
       'goerli',
       'kovan',
       'rinkeby',
       'mumbai',
-      'polygonzkevm-testnet'
+      'holesky',
+      'polygonzkevm',
+      'fantom',
+      'arbnova',
+      'scroll-sepolia',
+      'alfajores',
+      'baklava',
+      'frax-sepolia',
+      'polynomial',
+      'geist',
+      'lumia',
+      'sonic-blaze',
+      'xmtp-testnet',
+      'degen',
+      'tea-sepolia',
+      'botanix',
+      'bartio'
     ];
     // Filter out deprecated networks.
     const supportedNetworks = Object.values(Network).filter(
-      network => !deprecated.some(key => network.includes(key))
+      network =>
+        !network.startsWith('solana-') &&
+        !deprecated.some(key => network.includes(key))
     );
 
     describe('AlchemyProvider', () => {

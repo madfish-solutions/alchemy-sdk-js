@@ -1,13 +1,13 @@
-import { Alchemy, AlchemyWebSocketProvider, fromHex, toHex } from '../../src';
-import { JsonRpcRequest } from '../../src/internal/internal-types';
+import type { AlchemyWebSocketProvider } from '../../src/api/alchemy-websocket-provider.js';
+import { fromHex, toHex } from '../../src/index.js';
+import { JsonRpcRequest } from '../../src/internal/internal-types.js';
 import {
   GetLogsOptions,
   WebsocketBackfiller
-} from '../../src/internal/websocket-backfiller';
-import { Mocked, makeLogsEvent, makeNewHeadsEvent } from '../test-util';
+} from '../../src/internal/websocket-backfiller.js';
+import { Mocked, makeLogsEvent, makeNewHeadsEvent } from '../test-util.js';
 
 describe('Backfill tests', () => {
-  const sdk = new Alchemy();
   let provider: Mocked<AlchemyWebSocketProvider>;
   let backfiller: WebsocketBackfiller;
 
@@ -29,12 +29,12 @@ describe('Backfill tests', () => {
     ).toBe(false);
   }
 
-  beforeEach(async () => {
-    provider =
-      (await sdk.config.getWebSocketProvider()) as Mocked<AlchemyWebSocketProvider>;
+  beforeEach(() => {
+    provider = {
+      send: jest.fn(),
+      sendBatch: jest.fn()
+    } as unknown as Mocked<AlchemyWebSocketProvider>;
     backfiller = new WebsocketBackfiller(provider);
-    provider.send = jest.fn();
-    provider.sendBatch = jest.fn();
   });
 
   describe('getNewHeadsBackfill', () => {
@@ -190,8 +190,8 @@ describe('Backfill tests', () => {
     ): void {
       expect(provider.send).toBeCalled();
       const options: GetLogsOptions[] = provider.send.mock.calls
-        .filter(call => call[0] === 'eth_getLogs')
-        .map(call => call[1][0]);
+        .filter((call: any[]) => call[0] === 'eth_getLogs')
+        .map((call: any[]) => call[1][0]);
       expect(options.length).toEqual(1);
       const rangeFilter = options[0];
       expect(startInclusive).toEqual(fromHex(rangeFilter.fromBlock!));
@@ -225,8 +225,8 @@ describe('Backfill tests', () => {
         9
       );
       const options: GetLogsOptions[] = provider.send.mock.calls
-        .filter(call => call[0] === 'eth_getLogs')
-        .map(call => call[1][0]);
+        .filter((call: any[]) => call[0] === 'eth_getLogs')
+        .map((call: any[]) => call[1][0]);
       expect(options.length).toEqual(1);
       const rangeFilter = options[0];
       expect(rangeFilter.address).toEqual('0xABC');

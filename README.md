@@ -1,121 +1,153 @@
-> [!WARNING]
-> The Alchemy SDK JS has been deprecated and will be archived **January 2026**. The software will only receive minimal support until then. New and existing users are encourage to use the following tools instead:
-> - [Alchemy Smart Wallets SDK](https://github.com/alchemyplatform/aa-sdk) for transacting applications (includes support for the [Portfolio Data APIs](https://www.alchemy.com/docs/reference/portfolio-apis)).
-> - [Viem](https://github.com/wevm/viem/) for JS based Ethereum development.
-> - [Solana Web3JS](https://www.npmjs.com/package/@solana/web3.js) for JS based Solana development.
+# @temple-wallet/alchemy-sdk
 
-# Alchemy SDK for Javascript
+Maintained fork of the Alchemy JavaScript SDK. The upstream `alchemy-sdk` package is archived. This package keeps `new Alchemy()` and the same namespace methods (`core`, `nft`, `ws`, `transact`, `notify`, `debug`, `prices`, `portfolio`) and `Network` slugs, and implements them on [`@alchemy/common`](https://www.npmjs.com/package/@alchemy/common) and [viem](https://viem.sh).
 
-The Alchemy SDK is the most comprehensive, stable, and powerful Javascript SDK available today to interact with the blockchain.
+JSON-RPC goes through `alchemyTransport`, so chain endpoints stay current with `@alchemy/common`. NFT, Prices, Portfolio, and Notify stay on a small fetch client with the same retries as 3.x. WebSocket subscriptions use the `ws` package in Node and the global `WebSocket` in browsers.
 
-It supports the exact same syntax and functionality of the Ethers.js `AlchemyProvider` and `WebSocketProvider`, making it a 1:1 mapping for anyone using the Ethers.js `Provider`. However, it adds a significant amount of improved functionality on top of Ethers, such as easy access to Alchemy’s Enhanced and NFT APIs, robust WebSockets, and quality-of-life improvements such as automated retries.
+## Install
 
-The SDK currently supports the following chains (chains with '(d)' after are deprecated):
+```bash
+npm install @temple-wallet/alchemy-sdk
+```
 
-- **Ethereum**: Mainnet, Goerli (d), Sepolia, Holesky, Hoodi
+The package is ESM-only.
+
+```ts
+import { Alchemy, Network } from '@temple-wallet/alchemy-sdk';
+
+const alchemy = new Alchemy({
+  apiKey: 'demo', // Replace with your Alchemy API key.
+  network: Network.ETH_MAINNET
+});
+
+const balance = await alchemy.core.getBalance(
+  '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+);
+```
+
+A slug that `@alchemy/common` adds before this enum is updated can be passed as a string:
+
+```ts
+const alchemy = new Alchemy({ network: 'some-new-slug' });
+```
+
+`alchemy.config.getClient()` returns the underlying viem `PublicClient`.
+
+## Migrating from 3.x
+
+- **Removed exports:** `Wallet`, `Contract`, `ContractFactory`, `Utils`, and `BigNumber`. Sign and encode transactions with viem or another library, then pass the signed payload to `transact`.
+- **`bigint`:** balances, gas, fees, and other former `BigNumber` values are `bigint`. `fromHex` still returns a JavaScript `number`. NFT `tokenId` inputs are `string | number | bigint`.
+- **Providers:** `getProvider()` and `getWebSocketProvider()` no longer return ethers classes. Use `alchemy.config.getClient()` for JSON-RPC, and `alchemy.ws` for subscriptions.
+- **Settings:** `connectionInfoOverrides` is removed. Optional `headers` are forwarded on JSON-RPC requests. Optional `jwt` is sent as the bearer token instead of `apiKey`.
+- **Arguments:** methods take plain values. Ethers `Deferrable` and `Promise` argument wrapping is gone.
+- **ESM only.** There is no CommonJS build.
+- **Solana:** `Network.SOLANA_*` remains for Notify webhooks. JSON-RPC methods throw on a Solana network.
+
+## Supported networks
+
+The `Network` enum includes the slugs below. Chains published by a newer `@alchemy/common` also work when passed as a string. Chains marked `(d)` are deprecated upstream.
+
+- **Ethereum**: Mainnet, Goerli (d), Sepolia, Holesky (d), Hoodi
 - **Polygon**: Mainnet, Mumbai (d), Amoy
 - **Optimism**: Mainnet, Goerli (d), Sepolia
-- **Arbitrum**: Mainnet, Goerli (d), Sepolia
+- **Arbitrum**: Mainnet, Goerli (d), Sepolia, Nova (d)
 - **Astar**: Mainnet
-- **PolygonZKEVM**: Mainnet, Testnet(d), Cardona
+- **Polygon zkEVM**: Mainnet (d), Testnet (d), Cardona (d)
 - **Base**: Mainnet, Goerli (d), Sepolia
-- **Zksync**: Mainnet, Sepolia
+- **ZKsync**: Mainnet, Sepolia
 - **Shape**: Mainnet, Sepolia
 - **Linea**: Mainnet, Sepolia
-- **Fantom**: Mainnet, Testnet
-- **Zetachain**: Mainnet, Testnet
-- **Arbnova**: Mainnet
+- **Fantom**: Mainnet (d), Testnet (d)
+- **ZetaChain**: Mainnet, Testnet
 - **Blast**: Mainnet, Sepolia
 - **Mantle**: Mainnet, Sepolia
-- **Scroll**: Mainnet, Sepolia
+- **Scroll**: Mainnet, Sepolia (d)
 - **Gnosis**: Mainnet, Chiado
 - **BNB**: Mainnet, Testnet
 - **Avalanche**: Mainnet, Fuji
-- **Celo**: Mainnet, Alfajores, Baklava
+- **Celo**: Mainnet, Alfajores (d), Baklava (d), Sepolia
 - **Metis**: Mainnet
-- **OpBNB**: Mainnet, Testnet
-- **Berachain**: Mainnet, Bartio, Bepolia
+- **opBNB**: Mainnet, Testnet
+- **Berachain**: Bartio (d), Mainnet, Bepolia
 - **Soneium**: Mainnet, Minato
-- **Worldchain**: Mainnet, Sepolia
+- **World Chain**: Mainnet, Sepolia
 - **Rootstock**: Mainnet, Testnet
 - **Flow**: Mainnet, Testnet
 - **Zora**: Mainnet, Sepolia
-- **Frax**: Mainnet, Sepolia
-- **Polynomial**: Mainnet, Sepolia
-- **Crossfi**: Mainnet, Testnet
-- **Apechain**: Mainnet, Curtis
+- **Frax**: Mainnet, Sepolia (d)
+- **Polynomial**: Mainnet (d), Sepolia (d)
+- **CrossFi**: Mainnet, Testnet
+- **ApeChain**: Mainnet, Curtis
 - **Lens**: Mainnet, Sepolia
-- **Geist**: Mainnet, Polter
-- **Lumia**: Prism, Testnet
+- **Geist**: Mainnet (d), Polter (d)
+- **Lumia**: Prism (d), Testnet (d)
 - **Unichain**: Mainnet, Sepolia
-- **Sonic**: Mainnet, Blaze
-- **XMTP**: Testnet
+- **Sonic**: Mainnet, Blaze (d), Testnet
+- **XMTP**: Testnet (d), Ropsten
 - **Abstract**: Mainnet, Testnet
-- **Degen**: Mainnet
+- **Degen**: Mainnet (d)
 - **Ink**: Mainnet, Sepolia
 - **Sei**: Mainnet, Testnet
 - **Ronin**: Mainnet, Saigon
-- **Monad**: Testnet
-- **Settlus**: Mainnet, Testnet (Sepolia)
-- **Gensyn**: Testnet
+- **Monad**: Testnet, Mainnet
+- **Settlus**: Sepolia, Mainnet
+- **Solana**: Mainnet, Devnet
+- **Gensyn**: Testnet, Mainnet
 - **Superseed**: Mainnet, Sepolia
-- **Tea**: Sepolia
+- **Tea**: Sepolia (d)
 - **Anime**: Mainnet, Sepolia
 - **Story**: Mainnet, Aeneid
-- **Megaeth**: Testnet
-- **Botanix**: Mainnet, Testnet
-- **Humanity**: Mainnet
-- **Rise**: Testnet
+- **MegaETH**: Testnet, Mainnet
+- **Botanix**: Mainnet (d), Testnet (d)
+- **Humanity**: Mainnet, Testnet
+- **Rise**: Testnet, Mainnet
 - **Hyperliquid**: Mainnet, Testnet
 - **Plasma**: Mainnet, Testnet
+- **Robinhood**: Mainnet, Testnet
+- **Mythos**: Mainnet
+- **BOB**: Mainnet, Sepolia
+- **Katana**: Mainnet, Bokuto
+- **Giwa**: Sepolia
+- **Citrea**: Mainnet, Testnet
+- **Arc**: Mainnet, Testnet
+- **Tempo**: Mainnet, Moderato
+- **Galactica**: Mainnet, Cassiopeia
+- **World Mobile Chain**: Mainnet
+- **World Mobile**: Testnet
+- **Boba**: Mainnet, Sepolia
+- **X Layer**: Mainnet, Testnet
+- **Kaia**: Mainnet, Testnet
+- **Alpen**: Testnet
+- **Jovay**: Mainnet, Testnet
+- **Pharos**: Mainnet, Atlantic
+- **Elysium**: Testnet
+- **Mode**: Mainnet, Sepolia
+- **Edge**: Mainnet, Testnet
+- **Cronos**: Mainnet, Testnet
+- **ADI**: Mainnet, Testnet
+- **Stable**: Mainnet, Testnet
 
-You can find per-method documentation of the Alchemy SDK endpoints at the [Alchemy Docs linked in the sidebar](https://docs.alchemy.com/reference/alchemy-sdk-quickstart).
+You can find per-method documentation at the [Alchemy SDK reference](https://docs.alchemy.com/reference/alchemy-sdk-quickstart).
 
-## Getting started
+## Using the namespaces
 
-```
-npm install alchemy-sdk
-```
+- `core`: Ethereum JSON-RPC and Alchemy Enhanced APIs. Quantities are `bigint`.
+- `nft`: Alchemy NFT API
+- `ws`: WebSocket subscriptions, including Alchemy subscription events, with reconnect and backfill
+- `transact`: Transaction simulation and private transactions. Pass a signed raw transaction; this package does not sign.
+- `notify`: Alchemy Notify webhooks
+- `debug`: Transaction and block traces
+- `prices`: Token price endpoints
+- `portfolio`: Portfolio endpoints
 
-After installing the app, you can then import and use the SDK:
+## Getting started examples
 
-```ts
-import { Alchemy, Network } from 'alchemy-sdk';
+The snippets below use `@temple-wallet/alchemy-sdk`. Replace `alchemy-sdk` imports from older guides.
 
-// Optional config object, but defaults to the API key 'demo' and Network 'eth-mainnet'.
-const settings = {
-  apiKey: 'demo', // Replace with your Alchemy API key.
-  network: Network.ETH_MAINNET // Replace with your network.
-};
-
-const alchemy = new Alchemy(settings);
-```
-
-> **ℹ️ Creating a unique Alchemy API Key**
->
-> The public "demo" API key may be rate limited based on traffic. To create your own API key, **[sign up for an Alchemy account here](https://alchemy.com/?a=SDKquickstart)** and use the key created on your dashboard for the first app.
-
-The `Alchemy` object returned by `new Alchemy()` provides access to the Alchemy API. An optional config object can be passed in when initializing to set your API key, change the network, or specify the max number of retries.
-
-## Using the Alchemy SDK
-
-The Alchemy SDK currently supports the following namespaces:
-
-- `core`: All commonly-used Ethers.js Provider methods and Alchemy Enhanced API methods
-- `nft`: All Alchemy NFT API methods
-- `ws`: All WebSockets methods
-- `transact`: All Alchemy Transaction API methods
-- `notify`: CRUD endpoints for modifying Alchemy Notify Webhooks
-- `debug`: Methods to inspect and replay transactions and blocks
-
-If you are already using Ethers.js, you should be simply able to replace the Ethers.js Provider object with `alchemy.core` and it should work properly.
-
-> **ℹ️ ENS Name Resolution**
->
-> The Alchemy SDK now supports ENS names (e.g. `vitalik.eth`) for every parameter where you can pass in a Externally Owned Address, or user address (e.g. `0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045`).
+ENS names such as `vitalik.eth` are accepted anywhere a method takes an address.
 
 ```ts
-import { Alchemy, AlchemySubscription } from 'alchemy-sdk';
+import { Alchemy, AlchemySubscription } from '@temple-wallet/alchemy-sdk';
 
 // Using default settings - pass in a settings object to specify your API key and network
 const alchemy = new Alchemy();
@@ -140,31 +172,27 @@ alchemy.ws.on(
 );
 ```
 
-The Alchemy SDK also supports a number of Ethers.js objects that streamline the development process:
-
-- [`Utils`](https://docs.ethers.io/v5/api/utils/): Equivalent to `ethers.utils`, this provides a number of common Ethers.js utility methods for developers.
-  - [`Interface`](https://docs.ethers.io/v5/api/utils/abi/interface/): Found in `Utils.Interface`, this class abstracts the encoding and decoding required to interact with contracts on the Ethereum network.
-- [`Contract`](https://docs.ethers.io/v5/api/contract/contract/): An abstraction for smart contract code deployed to the blockchain.
-- [`ContractFactory`](https://docs.ethers.io/v5/api/contract/contract-factory/): Allows developers to build a `Contract` object.
-- [`Wallet`](https://docs.ethers.io/v5/api/signer/#Wallet): An implementation of `Signer` that can sign transactions and messages using a private key as a standard Externally Owned Account.
+Hex helpers that remain on the package are `fromHex`, `toHex`, and `isHex`. Contract calls and signing are left to viem.
 
 ## Alchemy Settings
 
 An `AlchemySettings` object can be passed on instantiation to the Alchemy object, with the following optional parameters:
 
 - `apiKey`: API key that can be found in the Alchemy dashboard. Defaults to `demo`: a rate-limited public key.
-- `network`: Name of the network. Defaults to `Network.ETH_MAINNET`
+- `jwt`: Optional bearer token for JSON-RPC. When set, it is sent instead of `apiKey`.
+- `network`: Name of the network, or any other Alchemy slug string. Defaults to `Network.ETH_MAINNET`.
 - `maxRetries`: The maximum number of retries to attempt if a request fails. Defaults to 5.
-- `url`: Optional URL endpoint to use for all requests. Setting this field will override the URL generated by the `network` and`apiKey` fields.
+- `url`: Optional URL endpoint to use for all requests. Setting this field will override the URL generated by the `network` and `apiKey` fields.
+- `headers`: Optional headers forwarded on JSON-RPC requests.
 - `authToken`: Alchemy auth token required to use the Notify API. This token can be found in the Alchemy Dashboard on the Notify tab.
 - `batchRequests`: Optional setting that automatically batches and sends json-rpc requests for higher throughput and reduced network IO. Defaults to false.
 - `requestTimeout`: Optional setting that sets the timeout for requests in milliseconds for the NFT and Notify namespaces. Defaults to no timeout.
 
 ## Alchemy Core
 
-The core namespace contains all commonly-used [Ethers.js Provider](https://docs.ethers.io/v5/api/providers/api-providers/#AlchemyProvider) methods. If you are already using Ethers.js, you should be simply able to replace the Ethers.js Provider object with `alchemy.core` when accessing provider methods and it should just work.
+The core namespace contains Ethereum JSON-RPC methods and Alchemy Enhanced APIs. Values that used to be ethers `BigNumber`s are `bigint`.
 
-It also includes the majority of Alchemy Enhanced APIs, including:
+It includes:
 
 - `getTokenMetadata()`: Get the metadata for a token contract address.
 - `getTokenBalances()`: Gets the token balances for an owner given a list of contracts.
@@ -176,21 +204,14 @@ You will also find the following utility methods:
 - `findContractDeployer()`: Find the contract deployer and block number for a given contract address.
 - `getTokensForOwner()`: Get all token balances and metadata for a given owner address
 
-### Accessing the full Ethers.js Provider
-
-To keep the package clean, we don't support certain uncommonly-used Ethers.js Provider methods as top-level methods in the Alchemy `core` namespace - for example, `provider.formatter`. If you'd like to access these methods, simply use the `alchemy.config.getProvider()` function to configure the
-Ethers.js Provider [AlchemyProvider](https://docs.ethers.io/v5/api/providers/api-providers/#AlchemyProvider) and return it.
+### Viem client
 
 ```ts
-import { Alchemy } from 'alchemy-sdk';
+import { Alchemy } from '@temple-wallet/alchemy-sdk';
 
 const alchemy = new Alchemy();
-
-async function runAlchemy() {
-  const ethersProvider = await alchemy.config.getProvider();
-  console.log(ethersProvider.formatter);
-}
-runAlchemy();
+const client = await alchemy.config.getClient();
+const chainId = await client.getChainId();
 ```
 
 ## Alchemy WebSockets
@@ -240,10 +261,10 @@ The `transact` namespace contains methods used for simulating and sending transa
 
 - `sendPrivateTransaction()`: Send a private transaction through Flashbots.
 - `cancelPrivateTransaction()`: Cancel a private transaction sent with Flashbots.
-- `simulateAssetChanges()`: Simulate a transaction and get a list of asset changes.
-- `simulateExecution()`: Simulate a transaction and get a full list of internal transactions, logs, ABI decoded results and more.
-- `simulateAssetChangesBundle()`: Simulate a list of transactions in sequence and get a list of asset changes.
-- `simulateExecutionBundle()`: Simulate a list of transactions in sequence and get a full list of internal transactions, logs, ABI decoded results and more.
+- `simulateAssetChanges()`: Simulate a call with `eth_simulateV1` and read transfers and approvals from the logs.
+- `simulateExecution()`: Simulate a call with `eth_simulateV1` and return the top-level result and logs.
+- `simulateAssetChangesBundle()`: Simulate calls in order and read each call's transfers and approvals.
+- `simulateExecutionBundle()`: Simulate calls in order and return each call's top-level result and logs.
 
 The `transact` namespace also aliases over several commonly used methods from the `core` namespace for convenience:
 

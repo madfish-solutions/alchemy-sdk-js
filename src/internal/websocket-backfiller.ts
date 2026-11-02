@@ -1,5 +1,5 @@
-import { AlchemyWebSocketProvider } from '../api/alchemy-websocket-provider';
-import { fromHex, toHex } from '../api/util';
+import type { AlchemyWebSocketProvider } from '../api/alchemy-websocket-provider.js';
+import { fromHex, toHex } from '../api/util.js';
 
 export interface BatchPart {
   method: string;
