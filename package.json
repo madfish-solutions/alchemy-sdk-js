@@ -1,6 +1,6 @@
 {
   "name": "@temple-wallet/alchemy-sdk",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Maintained Alchemy SDK facade. Namespaces and method names from alchemy-sdk, implemented on @alchemy/common and viem.",
   "author": "MadFish.Solutions",
   "license": "MIT",
@@ -29,7 +29,7 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "package.json": "./package.json"
+    "./package.json": "./package.json"
   },
   "repository": {
     "type": "git",
