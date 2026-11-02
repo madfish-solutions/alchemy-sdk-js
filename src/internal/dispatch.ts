@@ -1,24 +1,25 @@
-import axios, { AxiosError, AxiosRequestConfig } from 'axios';
-
-import { AlchemyConfig } from '../api/alchemy-config';
-import { AlchemyApiType } from '../util/const';
-import { logDebug, logInfo } from '../util/logger';
-import { sendAxiosRequest } from '../util/sendRest';
-import { ExponentialBackoff } from './backoff';
+import { AlchemyConfig } from '../api/alchemy-config.js';
+import { AlchemyApiType } from '../util/const.js';
+import { logDebug, logInfo } from '../util/logger.js';
+import { ExponentialBackoff } from './backoff.js';
+import { HttpRequestOptions, httpError, sendHttpRequest } from './http.js';
 
 /**
- * A wrapper function to make http requests and retry if the request fails.
+ * Makes an HTTP request and retries retryable failures.
+ *
+ * This is the local stand-in for `@alchemy/common`'s unexported
+ * `AlchemyRestClient`. Swap this file when that client is a public export and
+ * includes retries.
  *
  * @internal
  */
-// TODO: Wrap Axios error in AlchemyError.
 export async function requestHttpWithBackoff<Req, Res>(
   config: AlchemyConfig,
   apiType: AlchemyApiType,
   restApiName: string,
   methodName: string,
   params: Req,
-  overrides?: AxiosRequestConfig
+  overrides?: HttpRequestOptions
 ): Promise<Res> {
   let lastError: Error | undefined = undefined;
   const backoff = new ExponentialBackoff(config.maxRetries);
@@ -30,59 +31,56 @@ export async function requestHttpWithBackoff<Req, Res>(
 
       try {
         await backoff.backoff();
-      } catch (err) {
-        // Backoff errors when the maximum number of attempts is reached. Break
-        // out of the loop to preserve the last error.
+      } catch {
         break;
       }
 
-      const response = await sendAxiosRequest<Req, Res>(
+      const response = await sendHttpRequest(
         config._getRequestUrl(apiType),
         restApiName,
         methodName,
-        params,
+        (params ?? {}) as Record<string, unknown>,
         {
           ...overrides,
-          timeout: config.requestTimeout
+          timeout: overrides?.timeout ?? config.requestTimeout
         }
       );
 
       if (response.status === 200) {
         logDebug(restApiName, `Successful request: ${restApiName}`);
-        return response.data;
-      } else {
-        logInfo(
-          restApiName,
-          `Request failed: ${restApiName}, ${response.status}, ${response.data}`
-        );
-        lastError = new Error(response.status + ': ' + response.data);
+        return response.data as Res;
       }
-    } catch (err) {
-      if (!axios.isAxiosError(err) || err.response === undefined) {
-        throw err;
-      }
-      // TODO: Standardize all errors into AlchemyError
-      lastError = new Error(
-        err.response.status + ': ' + JSON.stringify(err.response.data)
+
+      logInfo(
+        restApiName,
+        `Request failed: ${restApiName}, ${response.status}, ${response.data}`
       );
-      if (!isRetryableHttpError(err, apiType)) {
+      lastError = httpError(response.status, response.data);
+      if (!isRetryableStatus(response.status, apiType)) {
         break;
       }
+    } catch (err) {
+      if (isHttpStatusError(err) && !isRetryableStatus(err.status, apiType)) {
+        lastError = err;
+        break;
+      }
+      lastError = err instanceof Error ? err : new Error(String(err));
     }
   }
   return Promise.reject(lastError);
 }
 
-function isRetryableHttpError(
-  err: AxiosError,
-  apiType: AlchemyApiType
-): boolean {
-  // TODO: remove 500s after webhooks are more stable.
+function isHttpStatusError(err: unknown): err is Error & { status: number } {
+  return (
+    err instanceof Error &&
+    typeof (err as { status?: unknown }).status === 'number'
+  );
+}
+
+function isRetryableStatus(status: number, apiType: AlchemyApiType): boolean {
   const retryableCodes =
     apiType === AlchemyApiType.WEBHOOK ? [429, 500, 503] : [429, 503];
-  return (
-    err.response !== undefined && retryableCodes.includes(err.response.status)
-  );
+  return retryableCodes.includes(status);
 }
 
 /**

@@ -1,23 +1,30 @@
-import {
-  BlockTag,
-  EventType,
-  TransactionReceipt
-} from '@ethersproject/abstract-provider';
-import { BigNumberish } from '@ethersproject/bignumber';
-import { ConnectionInfo } from '@ethersproject/web';
-
-import { NotifyNamespace } from '../api/notify-namespace';
+import type { BlockTag, Quantity, TransactionReceipt } from './eth.js';
 import {
   ERC1155Metadata,
   NftRefreshState,
   NftTokenType,
   RawContract
-} from './nft-types';
+} from './nft-types.js';
 
-export * from './ethers-types';
+export type {
+  Block,
+  BlockTag,
+  BlockWithTransactions,
+  FeeData,
+  Log,
+  NetworkInfo,
+  Quantity,
+  TransactionReceipt,
+  TransactionRequest,
+  TransactionResponse
+} from './eth.js';
 
-/** @internal Workaround to prevent TS unused import error */
-void (0 as unknown as NotifyNamespace);
+/**
+ * An event name, log filter, or list of filters passed to websocket methods.
+ *
+ * @public
+ */
+export type EventType = string | Filter | Array<string | Filter>;
 
 // TODO: separate this file into other files.
 
@@ -38,9 +45,11 @@ export interface AlchemySettings {
    * The name of the network. Once configured, the network cannot be changed. To
    * use a different network, instantiate a new `Alchemy` instance.
    *
-   * Defaults to: Network.ETH_MAINNET
+   * Defaults to: Network.ETH_MAINNET. A slug that is not in the {@link Network}
+   * enum is also accepted, so chains added by `@alchemy/common` can be used
+   * before this package is updated.
    */
-  network?: Network;
+  network?: Network | (string & {});
 
   /** The maximum number of retries to attempt if a request fails. Defaults to 5. */
   maxRetries?: number;
@@ -75,20 +84,15 @@ export interface AlchemySettings {
   batchRequests?: boolean;
 
   /**
-   * Optional overrides on the Ethers `ConnectionInfo` object used to configure
-   * the underlying JsonRpcProvider. This field is for advanced users who want
-   * to customize the provider's behavior.
-   *
-   * This override is applied last, so it will override any other
-   * AlchemySettings properties that affect the connection.
-   *
-   * Note that modifying the ConnectionInfo may break Alchemy SDK's default
-   * connection/url logic. It also does not affect `nft` and `notify`
-   * namespaces.
-   *
-   * {@link https://docs.ethers.org/v5/api/utils/web/#ConnectionInfo}
+   * Optional JWT used as a bearer token on JSON-RPC requests. When set, it is
+   * sent instead of {@link apiKey}.
    */
-  connectionInfoOverrides?: Partial<ConnectionInfo>;
+  jwt?: string;
+
+  /**
+   * Optional headers forwarded on JSON-RPC requests.
+   */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -104,6 +108,7 @@ export enum Network {
   /** @deprecated */
   ETH_GOERLI = 'eth-goerli',
   ETH_SEPOLIA = 'eth-sepolia',
+  /** @deprecated */
   ETH_HOLESKY = 'eth-holesky',
   ETH_HOODI = 'eth-hoodi',
   OPT_MAINNET = 'opt-mainnet',
@@ -114,14 +119,18 @@ export enum Network {
   /** @deprecated */
   ARB_GOERLI = 'arb-goerli',
   ARB_SEPOLIA = 'arb-sepolia',
+  /** @deprecated */
+  ARBNOVA_MAINNET = 'arbnova-mainnet',
   MATIC_MAINNET = 'polygon-mainnet',
   /** @deprecated */
   MATIC_MUMBAI = 'polygon-mumbai',
   MATIC_AMOY = 'polygon-amoy',
   ASTAR_MAINNET = 'astar-mainnet',
+  /** @deprecated */
   POLYGONZKEVM_MAINNET = 'polygonzkevm-mainnet',
   /** @deprecated */
   POLYGONZKEVM_TESTNET = 'polygonzkevm-testnet',
+  /** @deprecated */
   POLYGONZKEVM_CARDONA = 'polygonzkevm-cardona',
   BASE_MAINNET = 'base-mainnet',
   /** @deprecated */
@@ -133,17 +142,18 @@ export enum Network {
   SHAPE_SEPOLIA = 'shape-sepolia',
   LINEA_MAINNET = 'linea-mainnet',
   LINEA_SEPOLIA = 'linea-sepolia',
+  /** @deprecated */
   FANTOM_MAINNET = 'fantom-mainnet',
   /** @deprecated */
   FANTOM_TESTNET = 'fantom-testnet',
   ZETACHAIN_MAINNET = 'zetachain-mainnet',
   ZETACHAIN_TESTNET = 'zetachain-testnet',
-  ARBNOVA_MAINNET = 'arbnova-mainnet',
   BLAST_MAINNET = 'blast-mainnet',
   BLAST_SEPOLIA = 'blast-sepolia',
   MANTLE_MAINNET = 'mantle-mainnet',
   MANTLE_SEPOLIA = 'mantle-sepolia',
   SCROLL_MAINNET = 'scroll-mainnet',
+  /** @deprecated */
   SCROLL_SEPOLIA = 'scroll-sepolia',
   GNOSIS_MAINNET = 'gnosis-mainnet',
   GNOSIS_CHIADO = 'gnosis-chiado',
@@ -152,9 +162,11 @@ export enum Network {
   AVAX_MAINNET = 'avax-mainnet',
   AVAX_FUJI = 'avax-fuji',
   CELO_MAINNET = 'celo-mainnet',
+  /** @deprecated */
   CELO_ALFAJORES = 'celo-alfajores',
   /** @deprecated */
   CELO_BAKLAVA = 'celo-baklava',
+  CELO_SEPOLIA = 'celo-sepolia',
   METIS_MAINNET = 'metis-mainnet',
   OPBNB_MAINNET = 'opbnb-mainnet',
   OPBNB_TESTNET = 'opbnb-testnet',
@@ -173,8 +185,11 @@ export enum Network {
   ZORA_MAINNET = 'zora-mainnet',
   ZORA_SEPOLIA = 'zora-sepolia',
   FRAX_MAINNET = 'frax-mainnet',
+  /** @deprecated */
   FRAX_SEPOLIA = 'frax-sepolia',
+  /** @deprecated */
   POLYNOMIAL_MAINNET = 'polynomial-mainnet',
+  /** @deprecated */
   POLYNOMIAL_SEPOLIA = 'polynomial-sepolia',
   CROSSFI_MAINNET = 'crossfi-mainnet',
   CROSSFI_TESTNET = 'crossfi-testnet',
@@ -186,15 +201,22 @@ export enum Network {
   GEIST_MAINNET = 'geist-mainnet',
   /** @deprecated */
   GEIST_POLTER = 'geist-polter',
+  /** @deprecated */
   LUMIA_PRISM = 'lumia-prism',
+  /** @deprecated */
   LUMIA_TESTNET = 'lumia-testnet',
   UNICHAIN_MAINNET = 'unichain-mainnet',
   UNICHAIN_SEPOLIA = 'unichain-sepolia',
   SONIC_MAINNET = 'sonic-mainnet',
+  /** @deprecated */
   SONIC_BLAZE = 'sonic-blaze',
+  SONIC_TESTNET = 'sonic-testnet',
+  /** @deprecated */
   XMTP_TESTNET = 'xmtp-testnet',
+  XMTP_ROPSTEN = 'xmtp-ropsten',
   ABSTRACT_MAINNET = 'abstract-mainnet',
   ABSTRACT_TESTNET = 'abstract-testnet',
+  /** @deprecated */
   DEGEN_MAINNET = 'degen-mainnet',
   INK_MAINNET = 'ink-mainnet',
   INK_SEPOLIA = 'ink-sepolia',
@@ -203,27 +225,75 @@ export enum Network {
   RONIN_MAINNET = 'ronin-mainnet',
   RONIN_SAIGON = 'ronin-saigon',
   MONAD_TESTNET = 'monad-testnet',
+  MONAD_MAINNET = 'monad-mainnet',
   SETTLUS_SEPTESTNET = 'settlus-septestnet',
   SETTLUS_MAINNET = 'settlus-mainnet',
   SOLANA_MAINNET = 'solana-mainnet',
   SOLANA_DEVNET = 'solana-devnet',
   GENSYN_TESTNET = 'gensyn-testnet',
+  GENSYN_MAINNET = 'gensyn-mainnet',
   SUPERSEED_MAINNET = 'superseed-mainnet',
   SUPERSEED_SEPOLIA = 'superseed-sepolia',
+  /** @deprecated */
   TEA_SEPOLIA = 'tea-sepolia',
   ANIME_MAINNET = 'anime-mainnet',
   ANIME_SEPOLIA = 'anime-sepolia',
   STORY_MAINNET = 'story-mainnet',
   STORY_AENEID = 'story-aeneid',
   MEGAETH_TESTNET = 'megaeth-testnet',
+  MEGAETH_MAINNET = 'megaeth-mainnet',
+  /** @deprecated */
   BOTANIX_MAINNET = 'botanix-mainnet',
+  /** @deprecated */
   BOTANIX_TESTNET = 'botanix-testnet',
   HUMANITY_MAINNET = 'humanity-mainnet',
+  HUMANITY_TESTNET = 'humanity-testnet',
   RISE_TESTNET = 'rise-testnet',
+  RISE_MAINNET = 'rise-mainnet',
   HYPERLIQUID_MAINNET = 'hyperliquid-mainnet',
   HYPERLIQUID_TESTNET = 'hyperliquid-testnet',
   PLASMA_MAINNET = 'plasma-mainnet',
-  PLASMA_TESTNET = 'plasma-testnet'
+  PLASMA_TESTNET = 'plasma-testnet',
+  ROBINHOOD_MAINNET = 'robinhood-mainnet',
+  ROBINHOOD_TESTNET = 'robinhood-testnet',
+  MYTHOS_MAINNET = 'mythos-mainnet',
+  BOB_MAINNET = 'bob-mainnet',
+  BOB_SEPOLIA = 'bob-sepolia',
+  KATANA_MAINNET = 'katana-mainnet',
+  KATANA_BOKUTO = 'katana-bokuto',
+  GIWA_SEPOLIA = 'giwa-sepolia',
+  CITREA_MAINNET = 'citrea-mainnet',
+  CITREA_TESTNET = 'citrea-testnet',
+  ARC_MAINNET = 'arc-mainnet',
+  ARC_TESTNET = 'arc-testnet',
+  TEMPO_MAINNET = 'tempo-mainnet',
+  TEMPO_MODERATO = 'tempo-moderato',
+  GALACTICA_MAINNET = 'galactica-mainnet',
+  GALACTICA_CASSIOPEIA = 'galactica-cassiopeia',
+  WORLDMOBILECHAIN_MAINNET = 'worldmobilechain-mainnet',
+  WORLDMOBILE_TESTNET = 'worldmobile-testnet',
+  BOBA_MAINNET = 'boba-mainnet',
+  BOBA_SEPOLIA = 'boba-sepolia',
+  XLAYER_MAINNET = 'xlayer-mainnet',
+  XLAYER_TESTNET = 'xlayer-testnet',
+  KAIA_MAINNET = 'kaia-mainnet',
+  KAIA_TESTNET = 'kaia-testnet',
+  ALPEN_TESTNET = 'alpen-testnet',
+  JOVAY_MAINNET = 'jovay-mainnet',
+  JOVAY_TESTNET = 'jovay-testnet',
+  PHAROS_MAINNET = 'pharos-mainnet',
+  PHAROS_ATLANTIC = 'pharos-atlantic',
+  ELYSIUM_TESTNET = 'elysium-testnet',
+  MODE_MAINNET = 'mode-mainnet',
+  MODE_SEPOLIA = 'mode-sepolia',
+  EDGE_MAINNET = 'edge-mainnet',
+  EDGE_TESTNET = 'edge-testnet',
+  CRONOS_MAINNET = 'cronos-mainnet',
+  CRONOS_TESTNET = 'cronos-testnet',
+  ADI_MAINNET = 'adi-mainnet',
+  ADI_TESTNET = 'adi-testnet',
+  STABLE_MAINNET = 'stable-mainnet',
+  STABLE_TESTNET = 'stable-testnet'
 }
 
 /** Token Types for the `getTokenBalances()` endpoint. */
@@ -1363,7 +1433,7 @@ export interface NftFilter {
    * The token id of the NFT to track. If this field is omitted, defaults to
    * tracking all NFTs for the provided contract address.
    */
-  tokenId?: BigNumberish;
+  tokenId?: Quantity;
 }
 
 /** Response object for the {@link NotifyNamespace.getNftFilters} method. */

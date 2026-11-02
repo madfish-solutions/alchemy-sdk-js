@@ -1,4 +1,4 @@
-import { ExponentialBackoff } from '../../src/internal/backoff';
+import { ExponentialBackoff } from '../../src/internal/backoff.js';
 
 describe('Exponential Backoff', () => {
   const observedDelays: number[] = [];
@@ -36,7 +36,7 @@ describe('Exponential Backoff', () => {
         await backoff.backoff();
         numBackoffs += 1;
       }
-      fail('Should not exceed max attempts');
+      throw new Error('Should not exceed max attempts');
     } catch (e) {
       expect(numBackoffs).toEqual(3);
       expect((e as Error).message).toContain(

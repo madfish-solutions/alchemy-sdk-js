@@ -1,6 +1,6 @@
-import { Alchemy, Network } from '../../src';
-import { PortfolioAddress } from '../../src/types/portfolio-types';
-import { loadAlchemyEnv } from '../test-util';
+import { Alchemy, Network } from '../../src/index.js';
+import { PortfolioAddress } from '../../src/types/portfolio-types.js';
+import { loadAlchemyEnv } from '../test-util.js';
 
 jest.setTimeout(50000);
 

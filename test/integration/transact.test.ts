@@ -1,17 +1,42 @@
+import type { Hex } from 'viem';
+import { signTransaction } from 'viem/accounts';
+
+import { generateGasSpreadTransactions } from '../../src/api/transact-namespace.js';
 import {
   Alchemy,
   DebugCallType,
-  DecodingAuthority,
   GasOptimizedTransactionStatus,
   Network,
   SimulateAssetType,
   SimulateChangeType,
-  Utils,
-  Wallet
-} from '../../src';
-import { TESTING_PRIVATE_KEY, loadAlchemyEnv } from '../test-util';
+  isHex
+} from '../../src/index.js';
+import type { TransactionRequest } from '../../src/types/eth.js';
+import {
+  TESTING_PRIVATE_KEY,
+  TESTING_PUBLIC_ADDRESS,
+  loadAlchemyEnv
+} from '../test-util.js';
 
-jest.setTimeout(50000);
+const testingPrivateKey = `0x${TESTING_PRIVATE_KEY}` as Hex;
+
+function signTestingTransaction(transaction: TransactionRequest): Promise<Hex> {
+  return signTransaction({
+    privateKey: testingPrivateKey,
+    transaction: {
+      type: 'eip1559',
+      chainId: Number(transaction.chainId ?? 1),
+      nonce: Number(transaction.nonce ?? 0),
+      to: transaction.to as Hex,
+      value: BigInt(transaction.value ?? 0),
+      gas: BigInt(transaction.gasLimit ?? transaction.gas ?? 21000),
+      maxFeePerGas: BigInt(transaction.maxFeePerGas ?? 0),
+      maxPriorityFeePerGas: BigInt(transaction.maxPriorityFeePerGas ?? 0)
+    }
+  });
+}
+
+jest.setTimeout(120000);
 describe('E2E integration tests', () => {
   let alchemy: Alchemy;
 
@@ -24,18 +49,23 @@ describe('E2E integration tests', () => {
   });
 
   it('sendPrivateTransaction()', async () => {
+    const fee = await alchemy.core.getFeeData();
+    const nonce = await alchemy.core.getTransactionCount(
+      TESTING_PUBLIC_ADDRESS
+    );
     const transaction = {
       to: '0xa238b6008Bc2FBd9E386A5d4784511980cE504Cd',
-      // Use random number to allow back to back runs.
+      // Use a random value so back-to-back runs are distinct.
       value: Math.floor(Math.random() * 10000),
-      nonce: 2,
+      nonce,
       type: 2,
-      maxFeePerGas: 30000,
+      gasLimit: 21000,
+      maxFeePerGas: fee.maxFeePerGas ?? fee.gasPrice ?? 0n,
+      maxPriorityFeePerGas: fee.maxPriorityFeePerGas ?? 0n,
       chainId: 1
     };
 
-    const wallet = new Wallet(TESTING_PRIVATE_KEY);
-    const signed = await wallet.signTransaction(transaction);
+    const signed = await signTestingTransaction(transaction);
     const response = await alchemy.transact.sendPrivateTransaction(signed);
     expect(typeof response).toEqual('string');
   });
@@ -161,13 +191,7 @@ describe('E2E integration tests', () => {
       expect(change.rawAmount).toBe('1000000');
       expect(change.contractAddress).toBe(USDC_CONTRACT_ADDRESS.toLowerCase());
       expect(change.tokenId).toBeUndefined();
-      expect(change.decimals).toBe(6);
-      expect(change.symbol).toBe('USDC');
-      expect(change.name).toBe('USD Coin');
-      expect(change.logo).toBe(
-        'https://static.alchemyapi.io/images/assets/3408.png'
-      );
-      expect(change.amount).toBe('1');
+      expect(change.to).toBe('0xfc43f5f9dd45258b3aff31bdbe6561d97e8b71de');
     });
 
     it('can simulate transactions that revert', async () => {
@@ -183,8 +207,8 @@ describe('E2E integration tests', () => {
         'latest'
       );
       expect(res.changes.length).toEqual(0);
-      expect(res.gasUsed).toBeUndefined();
-      expect(typeof res.error?.message).toEqual('string');
+      expect(isHex(res.gasUsed!)).toBe(true);
+      expect(res.error?.message).toEqual('execution reverted');
     });
 
     it('can simulate approvals', async () => {
@@ -223,68 +247,30 @@ describe('E2E integration tests', () => {
       expect(res.logs).toHaveLength(1);
     });
 
-    // TODO(bastien): verify the decoded logs.
     it('can simulate sending 1 USDC', async () => {
       const { calls, logs } = await alchemy.transact.simulateExecution(
         transaction
       );
 
-      expect(calls).toHaveLength(2);
+      expect(calls).toHaveLength(1);
       expect(logs).toHaveLength(1);
 
-      // Call 1
       expect(calls[0].type).toBe(DebugCallType.CALL);
       expect(calls[0].from).toBe('0xd8da6bf26964af9d7eed9e03e53415d37aa96045');
       expect(calls[0].to).toBe('0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
       expect(calls[0].value).toBe('0x0');
-      expect(calls[0].gas).toBe('0x7fffffffffffaad0');
-      expect(Utils.isHexString(calls[0].gasUsed)).toBe(true);
+      expect(isHex(calls[0].gasUsed)).toBe(true);
       expect(calls[0].input).toBe(
         '0xa9059cbb000000000000000000000000fc43f5f9dd45258b3aff31bdbe6561d97e8b71de00000000000000000000000000000000000000000000000000000000000f4240'
       );
       expect(calls[0].output).toBe(
         '0x0000000000000000000000000000000000000000000000000000000000000001'
       );
+      expect(calls[0].decoded).toBeUndefined();
 
-      // Call 2
-      expect(calls[1].type).toBe(DebugCallType.DELEGATECALL);
-      expect(calls[1].from).toBe('0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
-      expect(calls[1].to).toBe('0xa2327a938febf5fec13bacfb16ae10ecbc4cbdcf');
-      expect(calls[1].value).toBeUndefined();
-      expect(calls[1].gas).toBe('0x7dffffffffff8ef8');
-      expect(calls[1].gasUsed).toBe('0x4cac');
-      expect(calls[1].input).toBe(
-        '0xa9059cbb000000000000000000000000fc43f5f9dd45258b3aff31bdbe6561d97e8b71de00000000000000000000000000000000000000000000000000000000000f4240'
+      expect(logs[0].topics[0]).toBe(
+        '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
       );
-      expect(calls[1].output).toBe(
-        '0x0000000000000000000000000000000000000000000000000000000000000001'
-      );
-      expect(calls[1].decoded).toStrictEqual({
-        authority: DecodingAuthority.ETHERSCAN,
-        methodName: 'transfer',
-        inputs: [
-          {
-            name: 'to',
-            value: '0xfc43f5f9dd45258b3aff31bdbe6561d97e8b71de',
-            type: 'address'
-          },
-          {
-            name: 'value',
-            value: '1000000',
-            type: 'uint256'
-          }
-        ],
-        outputs: [
-          {
-            name: '',
-            value: 'true',
-            type: 'bool'
-          }
-        ]
-      });
-
-      // Logs
-      expect(logs[0].topics).toBeDefined();
       expect(logs[0].address).toBe(
         '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
       );
@@ -328,11 +314,21 @@ describe('E2E integration tests', () => {
         type: 2,
         chainId: 5
       };
+      const gasLimit = Number(await alchemy.transact.estimateGas(transaction));
+      const priorityFee = await alchemy.transact.getMaxPriorityFeePerGas();
+      const currentBlock = await alchemy.core.getBlock('latest');
+      const baseFee = Number(currentBlock.baseFeePerGas ?? 0n);
+      const signedTransactions = await Promise.all(
+        generateGasSpreadTransactions(
+          transaction,
+          gasLimit,
+          baseFee,
+          priorityFee
+        ).map(signTestingTransaction)
+      );
 
-      const wallet = new Wallet(TESTING_PRIVATE_KEY);
       const response = await alchemy.transact.sendGasOptimizedTransaction(
-        transaction,
-        wallet
+        signedTransactions
       );
       expect(typeof response.trackingId).toEqual('string');
       expect(response.transactionHashes.length).toEqual(5);

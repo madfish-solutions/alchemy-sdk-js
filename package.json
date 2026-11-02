@@ -1,42 +1,39 @@
 {
-  "name": "alchemy-sdk",
-  "version": "3.6.5",
-  "description": "Extended Ethers.js SDK for Alchemy APIs",
-  "author": "Alchemy",
+  "name": "@temple-wallet/alchemy-sdk",
+  "version": "4.0.1",
+  "description": "Maintained Alchemy SDK facade. Namespaces and method names from alchemy-sdk, implemented on @alchemy/common and viem.",
+  "author": "MadFish.Solutions",
   "license": "MIT",
+  "type": "module",
   "scripts": {
     "pre-commit": "lint-staged",
     "prepublishOnly": "yarn build && yarn run lint && yarn run test",
-    "prebuild": "yarn clean && tsc --emitDeclarationOnly --declaration -p tsconfig.json",
-    "build": "rollup -c",
+    "prebuild": "node inject-version.cjs",
+    "build": "yarn clean && tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
     "format": "prettier --write '**/*.{html,js,json,md,ts}'",
     "format-file": "prettier --write",
-    "lint": "eslint -c .eslintrc.js '**/*.ts' --ignore-path '.gitignore'",
-    "lint-file": "eslint --fix",
-    "test": "jest test/unit",
-    "test-integration": "jest test/integration --testTimeout=20000",
+    "lint": "eslint -c .eslintrc.cjs '**/*.ts' --ignore-path '.gitignore'",
+    "lint-file": "eslint -c .eslintrc.cjs --fix",
+    "test": "vitest run",
+    "test-integration": "vitest run --config vitest.integration.config.ts",
     "docs": "typedoc --plugin none --out docs src/index.ts",
     "docs-md": "typedoc --plugin typedoc-plugin-markdown --out docs-md src/index.ts",
     "prepare": "husky install"
   },
-  "main": "dist/cjs/index.js",
-  "main-es": "dist/es/index.js",
-  "module": "dist/esm/index.js",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    "node": {
-      "types": "./dist/src/index.d.ts",
-      "require": "./dist/cjs/index.js",
-      "import": "./dist/cjs/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
-    "package.json": "./package.json",
-    "types": "./dist/src/index.d.ts",
-    "default": "./dist/esm/index.js"
+    "./package.json": "./package.json"
   },
-  "types": "./dist/src/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alchemyplatform/alchemy-sdk-js.git"
+    "url": "git+https://github.com/madfish-solutions/alchemy-sdk-js.git"
   },
   "files": [
     "dist"
@@ -47,69 +44,58 @@
       "yarn format-file"
     ],
     "package.json": [
-      "node ./inject-version.js",
+      "node ./inject-version.cjs",
       "git add src/version.ts"
     ]
   },
   "bugs": {
-    "url": "https://github.com/alchemyplatform/alchemy-sdk-js/issues"
+    "url": "https://github.com/madfish-solutions/alchemy-sdk-js/issues"
   },
-  "homepage": "https://github.com/alchemyplatform/alchemy-sdk-js#readme",
+  "homepage": "https://github.com/madfish-solutions/alchemy-sdk-js#readme",
   "dependencies": {
-    "@ethersproject/abi": "^5.7.0",
-    "@ethersproject/abstract-provider": "^5.7.0",
-    "@ethersproject/bignumber": "^5.7.0",
-    "@ethersproject/bytes": "^5.7.0",
-    "@ethersproject/contracts": "^5.7.0",
-    "@ethersproject/hash": "^5.7.0",
-    "@ethersproject/networks": "^5.7.0",
-    "@ethersproject/providers": "^5.7.0",
-    "@ethersproject/units": "^5.7.0",
-    "@ethersproject/wallet": "^5.7.0",
-    "@ethersproject/web": "^5.7.0",
-    "@solana/web3.js": "^1.87.6",
-    "axios": "^1.12.0",
-    "sturdy-websocket": "^0.2.1",
-    "websocket": "^1.0.34"
+    "@alchemy/common": "^5.3.0",
+    "viem": "^2.45.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@rollup/plugin-commonjs": "^22.0.0",
-    "@rollup/plugin-node-resolve": "^13.3.0",
-    "@size-limit/preset-big-lib": "^7.0.8",
     "@trivago/prettier-plugin-sort-imports": "^3.3.1",
-    "@types/jest": "^27.4.1",
+    "@types/ws": "^8.18.0",
     "@typescript-eslint/eslint-plugin": "^5.16.0",
     "@typescript-eslint/parser": "^5.16.0",
-    "axios-mock-adapter": "^1.22.0",
     "dotenv": "^16.0.3",
     "eslint": "^8.11.0",
     "eslint-plugin-import": "^2.25.4",
     "eslint-plugin-unused-imports": "^2.0.0",
     "husky": "^7.0.0",
-    "jest": "^27.5.1",
     "lint-staged": "^12.3.7",
     "mock-socket": "^9.1.4",
     "prettier": "2.6.0",
     "prettier-plugin-jsdoc": "^0.3.38",
-    "rollup": "^2.79.2",
-    "rollup-plugin-typescript2": "^0.31.2",
-    "size-limit": "^7.0.8",
-    "ts-jest": "^27.1.4",
     "tslib": "^2.3.1",
     "typedoc": "^0.22.15",
     "typedoc-plugin-markdown": "^3.12.1",
-    "typescript": "^4.5.5"
-  },
-  "resolutions": {
-    "elliptic": "6.6.1",
-    "ws": "7.5.10",
-    "@types/node": "18.19.68"
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.0"
   },
   "sideEffects": false,
-  "size-limit": [
-    {
-      "path": "dist/index.cjs.js",
-      "limit": "100 kB"
-    }
-  ]
+  "resolutions": {
+    "**/micromatch/picomatch": "2.3.2",
+    "@trivago/prettier-plugin-sort-imports/@babel/core/@babel/traverse": "7.17.3",
+    "@trivago/prettier-plugin-sort-imports/@babel/traverse": "7.17.3",
+    "@babel/traverse": "7.29.12",
+    "brace-expansion": "1.1.21",
+    "browserslist": "4.29.5",
+    "eslint-plugin-import/minimatch": "3.1.5",
+    "eslint/minimatch": "3.1.5",
+    "flatted": "3.4.4",
+    "glob/minimatch": "5.1.9",
+    "handlebars": "4.7.10",
+    "js-yaml": "4.3.2",
+    "lodash": "4.18.1",
+    "nanoid": "3.3.20",
+    "postcss": "8.5.32",
+    "source-map-js": "1.2.2",
+    "tinypool": "2.2.0",
+    "typedoc/minimatch": "5.1.9"
+  }
 }

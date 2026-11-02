@@ -1,4 +1,4 @@
-import { AlchemyConfig } from '../api/alchemy-config';
+import { AlchemyConfig } from '../api/alchemy-config.js';
 import {
   GetTokenPriceByAddressResponse,
   GetTokenPriceBySymbolRequest,
@@ -7,11 +7,11 @@ import {
   HistoricalPriceBySymbolResponse,
   HistoricalPriceInterval,
   TokenAddressRequest
-} from '../types/prices-types';
-import { Network } from '../types/types';
-import { AlchemyApiType } from '../util/const';
-import { nullsToUndefined } from '../util/util';
-import { requestHttpWithBackoff } from './dispatch';
+} from '../types/prices-types.js';
+import { Network } from '../types/types.js';
+import { AlchemyApiType } from '../util/const.js';
+import { nullsToUndefined } from '../util/util.js';
+import { requestHttpWithBackoff } from './dispatch.js';
 
 export async function getTokenPriceByAddress(
   config: AlchemyConfig,

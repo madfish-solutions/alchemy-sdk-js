@@ -1,52 +1,35 @@
 /** This is the main entry point for the library and exports user-facing API. */
-// IMPORTANT: when adding namespace imports (imports of the form
-// `import * as X from "./y"`), be sure to also update rollup.config.js so they
-// will be treeshaken correctly.
-// Namespace imports here:
-import * as Utils from './api/utils';
 
-export { Utils };
+export * from './types/types.js';
 
-// End namespace imports
+export * from './types/nft-types.js';
 
-export * from './types/types';
+export * from './types/prices-types.js';
 
-export * from './types/nft-types';
+export * from './types/portfolio-types.js';
 
-export * from './types/prices-types';
+export { Alchemy } from './api/alchemy.js';
 
-export * from './types/portfolio-types';
+export type { AlchemyConfig } from './api/alchemy-config.js';
 
-export { Alchemy } from './api/alchemy';
+export type { AlchemyWebSocketProvider } from './api/alchemy-websocket-provider.js';
 
-export { Wallet } from './api/alchemy-wallet';
+export type { NftNamespace } from './api/nft-namespace.js';
 
-export { Contract, ContractFactory } from './api/alchemy-contract';
+export type { WebSocketNamespace } from './api/websocket-namespace.js';
 
-export { BigNumber } from '@ethersproject/bignumber';
+export type { CoreNamespace } from './api/core-namespace.js';
 
-export type { AlchemyConfig } from './api/alchemy-config';
+export type { TransactNamespace } from './api/transact-namespace.js';
 
-export type { AlchemyProvider } from './api/alchemy-provider';
+export type { NotifyNamespace } from './api/notify-namespace.js';
 
-export type { AlchemyWebSocketProvider } from './api/alchemy-websocket-provider';
+export type { DebugNamespace } from './api/debug-namespace.js';
 
-export type { NftNamespace } from './api/nft-namespace';
+export type { PricesNamespace } from './api/prices-namespace.js';
 
-export type { WebSocketNamespace } from './api/websocket-namespace';
+export type { PortfolioNamespace } from './api/portfolio-namespace.js';
 
-export type { CoreNamespace } from './api/core-namespace';
+export { fromHex, toHex, isHex } from './api/util.js';
 
-export type { TransactNamespace } from './api/transact-namespace';
-
-export type { NotifyNamespace } from './api/notify-namespace';
-
-export type { DebugNamespace } from './api/debug-namespace';
-
-export type { PricesNamespace } from './api/prices-namespace';
-
-export type { PortfolioNamespace } from './api/portfolio-namespace';
-
-export { fromHex, toHex, isHex } from './api/util';
-
-export { setLogLevel, LogLevelString as LogLevel } from './util/logger';
+export { setLogLevel, LogLevelString as LogLevel } from './util/logger.js';

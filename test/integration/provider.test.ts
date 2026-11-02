@@ -1,64 +1,59 @@
-import { AlchemyProvider as EthersAlchemyProvider } from '@ethersproject/providers';
-
 import {
   Alchemy,
-  AlchemyProvider,
   AlchemySubscription,
-  AlchemyWebSocketProvider,
+  type AlchemyWebSocketProvider,
   Network
-} from '../../src';
-import { EthersNetwork } from '../../src/util/const';
-import { loadAlchemyEnv } from '../test-util';
+} from '../../src/index.js';
+import { loadAlchemyEnv } from '../test-util.js';
 
 jest.setTimeout(50000);
-/**
- * These integrations are sanity checks to ensure that the SDK's overriden
- * implementation of {@link AlchemyProvider} is working as expected.
- */
-// TODO(ethers): Figure out appropriate unit tests for the SDK's custom AlchemyProvider.
-describe('AlchemyProvider', () => {
+
+describe('JSON-RPC client', () => {
   let alchemy: Alchemy;
   let wsProvider: AlchemyWebSocketProvider;
-  let provider: AlchemyProvider;
-  let ethersProvider: EthersAlchemyProvider;
 
   beforeEach(async () => {
     await loadAlchemyEnv();
     alchemy = new Alchemy({
-      apiKey: process.env.ALCHEMY_API_KEY
+      apiKey: process.env.ALCHEMY_API_KEY,
+      network: Network.ETH_MAINNET
     });
-    if (
-      alchemy.config.network === Network.SOLANA_MAINNET ||
-      alchemy.config.network === Network.SOLANA_DEVNET
-    ) {
-      return;
-    }
-    ethersProvider = new EthersAlchemyProvider(
-      EthersNetwork[alchemy.config.network],
-      alchemy.config.apiKey
-    );
     wsProvider = await alchemy.config.getWebSocketProvider();
-    provider = await alchemy.config.getProvider();
   });
 
   afterEach(async () => {
     await wsProvider.destroy();
   });
 
-  // TODO(ethers): Extract into helper method to verify all inputs.
-  it('methods should return the same result', async () => {
-    const expected = await ethersProvider.send('eth_getBalance', [
-      '0xc94770007dda54cF92009BFF0dE90c06F603a09f',
+  it('json-rpc send matches the viem client', async () => {
+    const address = '0xc94770007dda54cF92009BFF0dE90c06F603a09f';
+    const actual = await alchemy.core.send('eth_getBalance', [
+      address,
       'latest'
     ]);
-    const actual = await provider.send('eth_getBalance', [
-      '0xc94770007dda54cF92009BFF0dE90c06F603a09f',
-      'latest'
-    ]);
+    const client = await alchemy.config.getClient();
+    const expected = await client.request({
+      method: 'eth_getBalance',
+      params: [address, 'latest']
+    });
     expect(actual).toEqual(expected);
   });
 
-  it('alchemy_pendingTransactions', done => {
+  it('returns a block number and balance', async () => {
+    const blockNumber = await alchemy.core.getBlockNumber();
+    expect(blockNumber).toBeGreaterThan(0);
+
+    const balance = await alchemy.core.getBalance(
+      '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+    );
+    expect(typeof balance).toEqual('bigint');
+
+    const client = await alchemy.config.getClient();
+    const chainId = await client.getChainId();
+    expect(chainId).toEqual(1);
+  });
+
+  it('alchemy_pendingTransactions', (done: () => void) => {
     let eventCount = 0;
     const address = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
     wsProvider.on(
@@ -77,7 +72,7 @@ describe('AlchemyProvider', () => {
     );
   });
 
-  it('alchemy_minedTransactions', done => {
+  it('alchemy_minedTransactions', (done: () => void) => {
     let eventCount = 0;
     wsProvider.on(
       {
@@ -95,7 +90,7 @@ describe('AlchemyProvider', () => {
     );
   });
 
-  it('once', done => {
+  it('once', (done: () => void) => {
     const address = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
     let eventCount = 0;
     wsProvider.once(
@@ -132,7 +127,7 @@ describe('AlchemyProvider', () => {
     expect(typeof res).toBe('number');
   });
 
-  it('full transactions', done => {
+  it('full transactions', (done: () => void) => {
     let eventCount = 0;
     wsProvider.on(
       {
@@ -146,8 +141,8 @@ describe('AlchemyProvider', () => {
       }
     );
   });
-  //
-  it('handles blocks', done => {
+
+  it('handles blocks', (done: () => void) => {
     wsProvider.on('block', res => {
       expect(typeof res).toEqual('number');
       done();
@@ -155,18 +150,15 @@ describe('AlchemyProvider', () => {
   });
 
   it('batching mode resolves promises', async () => {
-    alchemy = new Alchemy({
+    const batched = new Alchemy({
       apiKey: process.env.ALCHEMY_API_KEY,
+      network: Network.ETH_MAINNET,
       batchRequests: true
     });
 
-    const p1 = alchemy.core.getGasPrice();
-    const p2 = alchemy.core.getBlockNumber();
-    await p1;
-    await p2;
+    const gasPrice = await batched.core.getGasPrice();
+    const blockNumber = await batched.core.getBlockNumber();
+    expect(typeof gasPrice).toEqual('bigint');
+    expect(blockNumber).toBeGreaterThan(0);
   });
-
-  // // TODO(ethers): Write tests to make sure that the SDK's provider instance
-  // // has the correct network mappings compared to Ethers.
-  // it('network mappings should be correct', () => {});
 });

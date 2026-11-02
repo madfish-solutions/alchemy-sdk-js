@@ -1,7 +1,5 @@
-import { BlockTag } from '@ethersproject/abstract-provider';
-import { BigNumberish } from '@ethersproject/bignumber';
-
-import { OpenSeaSafelistRequestStatus, SortingOrder } from './types';
+import type { BlockTag, Quantity } from './eth.js';
+import { OpenSeaSafelistRequestStatus, SortingOrder } from './types.js';
 
 /**
  * An enum for specifying the token type on NFTs.
@@ -421,7 +419,7 @@ export interface NftMetadataBatchToken {
   contractAddress: string;
 
   /** The id of the NFT. */
-  tokenId: BigNumberish;
+  tokenId: Quantity;
 
   /** Optional field to specify the type of token to speed up the query. */
   tokenType?: NftTokenType.ERC1155 | NftTokenType.ERC721;
@@ -701,7 +699,7 @@ export interface GetNftSalesOptionsByContractAddress
   contractAddress: string;
 
   /** The token ID of an NFT within the specified contractAddress to filter sales by. */
-  tokenId?: BigNumberish;
+  tokenId?: Quantity;
 }
 
 /**

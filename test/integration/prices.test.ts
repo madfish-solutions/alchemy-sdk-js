@@ -1,9 +1,9 @@
-import { Alchemy, Network } from '../../src';
+import { Alchemy, Network } from '../../src/index.js';
 import {
   HistoricalPriceInterval,
   TokenAddressRequest
-} from '../../src/types/prices-types';
-import { loadAlchemyEnv } from '../test-util';
+} from '../../src/types/prices-types.js';
+import { loadAlchemyEnv } from '../test-util.js';
 
 jest.setTimeout(50000);
 

@@ -3,7 +3,7 @@ import {
   getHistoricalPriceBySymbol,
   getTokenPriceByAddress,
   getTokenPriceBySymbol
-} from '../internal/prices-api';
+} from '../internal/prices-api.js';
 import {
   GetTokenPriceByAddressResponse,
   GetTokenPriceBySymbolResponse,
@@ -11,9 +11,9 @@ import {
   HistoricalPriceBySymbolResponse,
   HistoricalPriceInterval,
   TokenAddressRequest
-} from '../types/prices-types';
-import { Network } from '../types/types';
-import { AlchemyConfig } from './alchemy-config';
+} from '../types/prices-types.js';
+import { Network } from '../types/types.js';
+import { AlchemyConfig } from './alchemy-config.js';
 
 /**
  * The Prices namespace contains methods for getting token price data.

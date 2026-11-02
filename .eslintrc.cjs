@@ -7,11 +7,17 @@ module.exports = {
     }
   ],
   parserOptions: {
-    ecmaVersion: 2017,
+    ecmaVersion: 2022,
     sourceType: 'module',
-    project: './tsconfig.json'
+    project: './tsconfig.eslint.json'
   },
-  ignorePatterns: ['.eslintrc.js', 'rollup.config.js'],
+  ignorePatterns: [
+    '.eslintrc.cjs',
+    'inject-version.cjs',
+    'vitest.config.ts',
+    'vitest.integration.config.ts',
+    'dist'
+  ],
   rules: {
     curly: ['error', 'all'],
     'no-extra-label': 'error',

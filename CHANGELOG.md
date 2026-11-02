@@ -6,6 +6,23 @@
 
 ### Minor Changes
 
+- Refreshed `Network` to the current Alchemy dashboard. Slugs Alchemy no longer offers stay on the enum and are marked `@deprecated`.
+- `Network` includes EVM chains and Solana. Starknet, Bitcoin and the other UTXO chains, Sui, Aptos, Stellar, Injective, Tron, Celestia Bridge, and the Ethereum beacon endpoints are omitted.
+
+## 4.0.0
+
+### Major Changes
+
+This package is now the maintained `@temple-wallet/alchemy-sdk` fork. JSON-RPC uses `@alchemy/common` and viem. NFT, Prices, Portfolio, and Notify use a fetch client with the existing retry policy. WebSockets use `ws` on Node.
+
+- Removed `Wallet`, `Contract`, `ContractFactory`, `Utils`, `BigNumber`, and the ethers provider classes.
+- Former `BigNumber` return values are `bigint`. `fromHex` still returns a number.
+- `alchemy.config.getClient()` returns a viem `PublicClient`. Subscriptions stay on `alchemy.ws`.
+- `connectionInfoOverrides` is replaced by optional `headers`. Optional `jwt` is forwarded to `alchemyTransport`.
+- `network` accepts `Network` or any other slug string.
+- ESM-only. ethers v5, axios, `websocket`, `sturdy-websocket`, and `@solana/web3.js` are no longer dependencies.
+- Transaction simulation uses `eth_simulateV1`. Asset changes are decoded from transfer and approval logs. Internal call traces and token metadata from the retired `alchemy_simulate*` methods are not returned.
+
 ## 3.6.5
 
 ### Minor Changes

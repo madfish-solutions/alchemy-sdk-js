@@ -1,12 +1,14 @@
+import type { Mock } from 'vitest';
+
 import {
   JsonRpcRequest,
   JsonRpcResponse
-} from '../../src/internal/internal-types';
-import { RequestBatcher } from '../../src/internal/request-batcher';
+} from '../../src/internal/internal-types.js';
+import { RequestBatcher } from '../../src/internal/request-batcher.js';
 
 describe('RequestBatcher', () => {
   let batcher: RequestBatcher;
-  let fetchJsonMock: jest.Mock;
+  let fetchJsonMock: Mock;
   beforeEach(() => {
     fetchJsonMock = jest.fn();
     batcher = new RequestBatcher(fetchJsonMock);

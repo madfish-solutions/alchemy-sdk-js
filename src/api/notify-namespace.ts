@@ -1,8 +1,5 @@
-import { AxiosRequestConfig, Method } from 'axios';
-
-import { BigNumber } from '@ethersproject/bignumber';
-
-import { requestHttpWithBackoff } from '../internal/dispatch';
+import { requestHttpWithBackoff } from '../internal/dispatch.js';
+import type { HttpRequestOptions } from '../internal/http.js';
 import {
   RawAddressActivityResponse,
   RawCreateWebhookResponse,
@@ -11,7 +8,7 @@ import {
   RawNftFilterParam,
   RawNftFiltersResponse,
   RawWebhook
-} from '../internal/raw-interfaces';
+} from '../internal/raw-interfaces.js';
 import {
   AddressActivityResponse,
   AddressActivityWebhook,
@@ -37,9 +34,10 @@ import {
   Webhook,
   WebhookType,
   WebhookVersion
-} from '../types/types';
-import { AlchemyApiType } from '../util/const';
-import { AlchemyConfig } from './alchemy-config';
+} from '../types/types.js';
+import { AlchemyApiType } from '../util/const.js';
+import { AlchemyConfig } from './alchemy-config.js';
+import { toDecimalString } from './util.js';
 
 /**
  * The Notify namespace contains methods used for creating, reading, updating,
@@ -275,7 +273,7 @@ export class NotifyNamespace {
       typeof webhookOrId === 'string' ? webhookOrId : webhookOrId.id;
     let restApiName;
     let methodName;
-    let method: Method;
+    let method: string;
     let data;
     if ('isActive' in update) {
       restApiName = 'update-webhook';
@@ -475,7 +473,7 @@ export class NotifyNamespace {
         filter.tokenId
           ? {
               contract_address: filter.contractAddress,
-              token_id: BigNumber.from(filter.tokenId).toString()
+              token_id: toDecimalString(filter.tokenId)
             }
           : {
               contract_address: filter.contractAddress
@@ -594,7 +592,7 @@ export class NotifyNamespace {
     restApiName: string,
     methodName: string,
     params: {},
-    overrides?: AxiosRequestConfig
+    overrides?: HttpRequestOptions
   ): Promise<Response> {
     return requestHttpWithBackoff(
       this.config,
@@ -621,9 +619,8 @@ export class NotifyNamespace {
       return [];
     }
     const resolvedAddresses: string[] = [];
-    const provider = await this.config.getProvider();
     for (const address of addresses) {
-      const rawAddress = await provider.resolveName(address);
+      const rawAddress = await this.config.resolveName(address);
       if (rawAddress === null) {
         throw new Error(`Unable to resolve the ENS address: ${address}`);
       }
@@ -643,9 +640,9 @@ const WEBHOOK_NETWORK_TO_NETWORK: { [key: string]: Network } =
   Object.fromEntries(Object.entries(Network));
 
 /** Mapping of the SDK's network representation the webhook API's network representation. */
-const NETWORK_TO_WEBHOOK_NETWORK: Map<Network, string> = Object.keys(
+const NETWORK_TO_WEBHOOK_NETWORK: Map<string, string> = Object.keys(
   Network
-).reduce((map: Map<Network, string>, key) => {
+).reduce((map: Map<string, string>, key) => {
   if (key in WEBHOOK_NETWORK_TO_NETWORK) {
     map.set(WEBHOOK_NETWORK_TO_NETWORK[key], key);
   }
@@ -701,7 +698,7 @@ function parseRawNftFiltersResponse(
       f.token_id
         ? {
             contractAddress: f.contract_address,
-            tokenId: BigNumber.from(f.token_id).toString()
+            tokenId: toDecimalString(f.token_id)
           }
         : {
             contractAddress: f.contract_address
@@ -716,7 +713,7 @@ function nftFilterToParam(filter: NftFilter): RawNftFilterParam {
   return filter.tokenId
     ? {
         contract_address: filter.contractAddress,
-        token_id: BigNumber.from(filter.tokenId).toString()
+        token_id: toDecimalString(filter.tokenId)
       }
     : {
         contract_address: filter.contractAddress

@@ -2,10 +2,10 @@ import {
   Alchemy,
   AssetTransfersCategory,
   TokenBalanceType,
-  fromHex
-} from '../../src';
-import { Utils } from '../../src/index';
-import { loadAlchemyEnv } from '../test-util';
+  fromHex,
+  toHex
+} from '../../src/index.js';
+import { loadAlchemyEnv } from '../test-util.js';
 
 jest.setTimeout(50000);
 // Integration tests for Alchemy's custom methods on top the core ethers' offerings.
@@ -103,7 +103,7 @@ describe('E2E integration tests', () => {
   it('getTransactionReceipts()', async () => {
     const blockNumber = (await alchemy.core.getBlockNumber()) - 20;
     const response = await alchemy.core.getTransactionReceipts({
-      blockNumber: Utils.hexlify(blockNumber)
+      blockNumber: toHex(blockNumber)
     });
     expect(response.receipts?.length).toBeGreaterThan(0);
     expect(fromHex(response.receipts![0].blockNumber.toString())).toEqual(

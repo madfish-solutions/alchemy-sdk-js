@@ -11,8 +11,8 @@ import {
   OpenSeaSafelistRequestStatus,
   SortingOrder,
   fromHex
-} from '../../src';
-import { loadAlchemyEnv } from '../test-util';
+} from '../../src/index.js';
+import { loadAlchemyEnv } from '../test-util.js';
 
 jest.setTimeout(50000);
 

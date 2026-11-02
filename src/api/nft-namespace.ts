@@ -1,5 +1,3 @@
-import type { BigNumberish } from '@ethersproject/bignumber';
-
 import {
   computeRarity,
   getCollectionMetadata,
@@ -28,7 +26,8 @@ import {
   searchContractMetadata,
   summarizeNftAttributes,
   verifyNftOwnership
-} from '../internal/nft-api';
+} from '../internal/nft-api.js';
+import type { Quantity } from '../types/eth.js';
 import {
   BaseNft,
   ComputeRarityResponse,
@@ -71,13 +70,13 @@ import {
   OwnedNftsResponse,
   SearchContractMetadataResponse,
   TransfersNftResponse
-} from '../types/nft-types';
+} from '../types/nft-types.js';
 import {
   GetTransfersForOwnerOptions,
   GetTransfersForOwnerTransferType,
   RefreshContractResult
-} from '../types/types';
-import { AlchemyConfig } from './alchemy-config';
+} from '../types/types.js';
+import { AlchemyConfig } from './alchemy-config.js';
 
 /**
  * The NFT namespace contains all the functionality related to NFTs.
@@ -100,12 +99,12 @@ export class NftNamespace {
    */
   getNftMetadata(
     contractAddress: string,
-    tokenId: BigNumberish,
+    tokenId: Quantity,
     options?: GetNftMetadataOptions
   ): Promise<Nft>;
   getNftMetadata(
     contractAddress: string,
-    tokenId: BigNumberish,
+    tokenId: Quantity,
     optionsOrTokenType?: GetNftMetadataOptions | NftTokenType,
     tokenUriTimeoutInMs?: number
   ): Promise<Nft> {
@@ -361,7 +360,7 @@ export class NftNamespace {
    */
   getOwnersForNft(
     contractAddress: string,
-    tokenId: BigNumberish,
+    tokenId: Quantity,
     options?: GetOwnersForNftOptions
   ): Promise<GetOwnersForNftResponse> {
     return getOwnersForNft(this.config, contractAddress, tokenId, options);
@@ -533,7 +532,7 @@ export class NftNamespace {
    */
   computeRarity(
     contractAddress: string,
-    tokenId: BigNumberish
+    tokenId: Quantity
   ): Promise<ComputeRarityResponse> {
     return computeRarity(this.config, contractAddress, tokenId);
   }
@@ -577,7 +576,7 @@ export class NftNamespace {
    */
   refreshNftMetadata(
     contractAddress: string,
-    tokenId: BigNumberish
+    tokenId: Quantity
   ): Promise<boolean> {
     return refreshNftMetadata(this.config, contractAddress, tokenId);
   }

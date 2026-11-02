@@ -4,9 +4,9 @@ import {
   getTokenBalancesByWallet,
   getTokensByWallet,
   getTransactionsByWallet
-} from '../internal/portfolio-api';
-import { PortfolioAddress } from '../types/portfolio-types';
-import { AlchemyConfig } from './alchemy-config';
+} from '../internal/portfolio-api.js';
+import { PortfolioAddress } from '../types/portfolio-types.js';
+import { AlchemyConfig } from './alchemy-config.js';
 
 /**
  * The Portfolio namespace contains methods for getting data needed to build a portfolio.

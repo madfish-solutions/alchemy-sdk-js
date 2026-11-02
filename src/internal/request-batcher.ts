@@ -1,4 +1,4 @@
-import { JsonRpcRequest, JsonRpcResponse } from './internal-types';
+import { JsonRpcRequest, JsonRpcResponse } from './internal-types.js';
 
 /** Maximum size of a batch on the rpc provider. */
 const DEFAULT_MAX_REQUEST_BATCH_SIZE = 100;

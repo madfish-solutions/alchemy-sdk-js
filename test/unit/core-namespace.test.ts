@@ -1,4 +1,4 @@
-import { Alchemy } from '../../src';
+import { Alchemy } from '../../src/index.js';
 
 describe('Core Namespace', () => {
   let alchemy: Alchemy;

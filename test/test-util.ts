@@ -1,3 +1,5 @@
+import type { Mock } from 'vitest';
+
 import {
   BaseNft,
   Nft,
@@ -8,7 +10,7 @@ import {
   OwnedBaseNft,
   OwnedNft,
   toHex
-} from '../src';
+} from '../src/index.js';
 import {
   RawNft,
   RawNftContractForNft,
@@ -19,9 +21,9 @@ import {
   RawOpenSeaCollectionMetadata,
   RawOwnedBaseNft,
   RawOwnedNft
-} from '../src/internal/raw-interfaces';
-import { BlockHead, LogsEvent } from '../src/internal/websocket-backfiller';
-import { getNftFromRaw } from '../src/util/util';
+} from '../src/internal/raw-interfaces.js';
+import { BlockHead, LogsEvent } from '../src/internal/websocket-backfiller.js';
+import { getNftFromRaw } from '../src/util/util.js';
 
 export const TEST_WALLET_PRIVATE_KEY =
   'dd5bdf09397b1fdf98e4f72c66047d5104b1511fa7dc1b8fdddd61a150f732c9';
@@ -236,12 +238,12 @@ export function createRawContractForOwner(
     isSpam: false,
     totalBalance: '1',
     numDistinctTokensOwned: '1',
-    name: 'NFT Name' ?? null,
-    totalSupply: '12345' ?? null,
-    symbol: 'SYM' ?? null,
+    name: 'NFT Name',
+    totalSupply: '12345',
+    symbol: 'SYM',
     tokenType: NftTokenType.UNKNOWN,
-    contractDeployer: '0xabcdef' ?? null,
-    deployedBlockNumber: 42 ?? null,
+    contractDeployer: '0xabcdef',
+    deployedBlockNumber: 42,
     ...overrides
   };
 }
@@ -295,7 +297,7 @@ export function verifyNftContractMetadata(
 }
 
 export type Mocked<T> = T & {
-  [K in keyof T]: T[K] extends Function ? T[K] & jest.Mock : T[K];
+  [K in keyof T]: T[K] extends Function ? T[K] & Mock : T[K];
 };
 
 /** A Promise implementation for deferred resolution. */
