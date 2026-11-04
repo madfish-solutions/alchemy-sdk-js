@@ -1,3 +1,4 @@
+import { toError } from './error.js';
 import { JsonRpcRequest, JsonRpcResponse } from './internal-types.js';
 
 /** Maximum size of a batch on the rpc provider. */
@@ -88,7 +89,9 @@ export class RequestBatcher {
         batch.forEach((inflightRequest, index) => {
           const payload = result[index];
           if (payload.error) {
-            const error = new Error(payload.error.message);
+            const error = new Error(
+              payload.error.message ?? 'Batch request failed'
+            );
             (error as any).code = payload.error.code;
             (error as any).data = payload.error.data;
             inflightRequest.reject!(error);
@@ -98,8 +101,9 @@ export class RequestBatcher {
         });
       },
       error => {
+        const failure = toError(error, 'Batch request failed');
         batch.forEach(inflightRequest => {
-          inflightRequest.reject!(error);
+          inflightRequest.reject!(failure);
         });
       }
     );

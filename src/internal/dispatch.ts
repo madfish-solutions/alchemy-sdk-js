@@ -2,6 +2,7 @@ import { AlchemyConfig } from '../api/alchemy-config.js';
 import { AlchemyApiType } from '../util/const.js';
 import { logDebug, logInfo } from '../util/logger.js';
 import { ExponentialBackoff } from './backoff.js';
+import { toError } from './error.js';
 import { HttpRequestOptions, httpError, sendHttpRequest } from './http.js';
 
 /**
@@ -22,18 +23,17 @@ export async function requestHttpWithBackoff<Req, Res>(
   overrides?: HttpRequestOptions
 ): Promise<Res> {
   let lastError: Error | undefined = undefined;
-  const backoff = new ExponentialBackoff(config.maxRetries);
-  for (let attempt = 0; attempt < config.maxRetries + 1; attempt++) {
+  // `maxRetries` counts retries after the first try, matching viem `retryCount`.
+  // `0` sends the request once.
+  const attempts = attemptCount(config.maxRetries);
+  const backoff = new ExponentialBackoff(attempts);
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       if (lastError !== undefined) {
         logInfo('requestHttp', `Retrying after error: ${lastError.message}`);
       }
 
-      try {
-        await backoff.backoff();
-      } catch {
-        break;
-      }
+      await backoff.backoff();
 
       const response = await sendHttpRequest(
         config._getRequestUrl(apiType),
@@ -64,10 +64,16 @@ export async function requestHttpWithBackoff<Req, Res>(
         lastError = err;
         break;
       }
-      lastError = err instanceof Error ? err : new Error(String(err));
+      lastError = toError(err, `${methodName} failed`);
     }
   }
-  return Promise.reject(lastError);
+  throw lastError ?? new Error(`${restApiName}.${methodName} failed`);
+}
+
+/** Total tries: the first request, plus each allowed retry. */
+function attemptCount(maxRetries: number): number {
+  const retries = Number.isFinite(maxRetries) ? Math.max(0, maxRetries) : 0;
+  return retries + 1;
 }
 
 function isHttpStatusError(err: unknown): err is Error & { status: number } {

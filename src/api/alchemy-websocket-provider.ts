@@ -1,4 +1,5 @@
 import { fromHex } from '../api/util.js';
+import { toError } from '../internal/error.js';
 import {
   ALCHEMY_EVENT_TYPES,
   ALCHEMY_MINED_TRANSACTIONS_EVENT_TYPE,
@@ -667,7 +668,7 @@ async function withBackoffRetries<T>(
     } catch (error) {
       i++;
       if (i >= retryCount || !shouldRetry(error)) {
-        throw error;
+        throw toError(error);
       }
       await delay(nextWaitTime);
       nextWaitTime =

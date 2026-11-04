@@ -14,6 +14,7 @@ import type {
   SimulationCallTrace,
   SimulationDebugLog
 } from '../types/types.js';
+import { toError } from './error.js';
 
 const TRANSFER_TOPIC =
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -73,7 +74,7 @@ export async function simulateTransactions(
     blocks = await config.send('eth_simulateV1', [withValidation, block]);
   } catch (error) {
     if (!rejectsValidationFlag(error)) {
-      throw error;
+      throw toError(error, 'eth_simulateV1 failed');
     }
     blocks = await config.send('eth_simulateV1', [
       {
