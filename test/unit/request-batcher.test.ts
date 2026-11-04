@@ -84,11 +84,12 @@ describe('RequestBatcher', () => {
       try {
         await promise;
       } catch (e) {
-        expect(e).toEqual(expected);
+        expect(e).toBeInstanceOf(Error);
+        expect((e as Error).message).toEqual(expected);
         return;
       }
 
-      throw new Error('Promise should have thrown' + expected);
+      throw new Error('Promise should have thrown ' + expected);
     }
     batcher = new RequestBatcher(fetchJsonMock, 2);
     fetchJsonMock
