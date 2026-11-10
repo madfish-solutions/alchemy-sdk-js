@@ -103,7 +103,7 @@ function encodeQuery(query: Record<string, unknown>): string {
     }
     if (Array.isArray(value)) {
       for (const item of value) {
-        search.append(key, String(item));
+        search.append(key + '[]', String(item));
       }
     } else {
       search.append(key, String(value));

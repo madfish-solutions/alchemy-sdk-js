@@ -1,6 +1,6 @@
 {
   "name": "@temple-wallet/alchemy-sdk",
-  "version": "4.0.2",
+  "version": "4.0.3",
   "description": "Maintained Alchemy SDK facade. Namespaces and method names from alchemy-sdk, implemented on @alchemy/common and viem.",
   "author": "MadFish.Solutions",
   "license": "MIT",
